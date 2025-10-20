@@ -49,7 +49,7 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 
 ### 2.1 参与者与信息结构
 - 参与者：Client（买方）、Contractor（卖方）。
-- 系统角色：治理模块（Governance）。非订单参与者，具有限定的 ForfeitPool 提款权限；不参与订单结算，不影响订单维度的记账与可提余额。
+- 系统角色：治理模块（Governance）；服务商（Provider，白名单内的第三方服务平台，按订单固化费率在 Settled 时记账 `Fee`，通过 `withdraw(token)` 提现）。不驱动订单状态机，不改变结算不变量。
 - 公开信息：状态、时间戳、托管额 E、事件与日志；
 - 私人信息：V（买方价值）、C（卖方成本）、质量主观信号。
 
@@ -70,11 +70,11 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 ### 2.5 资产与代币
 - `tokenAddr` 表示资产标识（ERC‑20 或“原生 ETH”哨兵）；
 - ETH 资产：充值入口为 `payable`，MUST 满足 `msg.value == amount`；提现使用 `call` 且 `nonReentrant`；
-- ERC‑20：`msg.value == 0`，使用 SafeERC20 `transferFrom` 成功后记账；
+- ERC‑20：`msg.value == 0`，使用 `SafeERC20.safeTransferFrom(...)` 成功后记账；
 - 建议：支持“WETH 适配层”作为工程选项，但规范层必须支持原生 ETH。
 
 ### 2.6 参数协商与范围（规范）
-- 协商主体与生效时点：`E`、`D_due`、`D_rev`、`D_dis` 由 Client 与 Contractor 针对“每一笔订单”达成一致；实现必须在订单建立/接受时固化存储。
+- 协商主体与生效时点：`E`、`D_due`、`D_rev`、`D_dis` 由 Client 与 Contractor 针对“每一笔订单”达成一致；实现必须在订单建立/接受时固化存储。订单同时固化 `provider` 与 `feeBps`（服务商与费率），且自固化后 MUST NOT 修改。
 - 默认值：若 `dueSec/revSec/disSec` 传入 0，则采用协议默认 `D_due=1d=86_400s`、`D_rev=1d=86_400s`、`D_dis=7d=604_800s`；入库与事件需记录替换后的“生效值”。
 - 修改规则：`E` 仅可单调增加；`D_due/D_rev` 仅允许在争议发生前单调延后；`D_dis` 自设置后固定，不提供延长入口。
 - 有界性：三者必须为有限值且大于 0；为抵御重组，`D_dis ≥ 2·T_reorg`（由部署方按目标链给出估计）。
@@ -147,7 +147,7 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
   - G.E4/G.E8 `approveReceipt`：
     - Condition：`state ∈ {Executing, Reviewing}`。
     - Subject：`client`。
-    - Effects：结清金额 `amountToSeller = escrow`，与后续 `BalanceCredited（kind=Payout）` 记账，订单 `escrow` 清零，状态转入 Settled。
+    - Effects：结清金额 `amountToSeller = escrow`，与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账，订单 `escrow` 清零，状态转入 Settled。
     - Failure：条件未满足 MUST `revert`。
   - G.E5 `raiseDispute`（执行阶段）：
     - Condition：`state = Executing` 且 `now < startTime + D_due`。
@@ -193,7 +193,11 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 ### 3.4 终态约束
 - `Settled/Forfeited/Cancelled` 为终态；到达终态后不得再改变状态或资金记账；仅允许提现入口读取并领取既有可领额（若有）。
 - 终态资金口径：到达任一终态时，订单 `escrow` MUST 置为 0，并按终态路径完成记账：
-  - Settled：将 `amountToSeller` 记入卖方可提余额（Payout），并将 `escrow − amountToSeller` 记入买方可提余额（Refund）。
+  - Settled：记账三笔：
+    - 卖方 Payout：`payoutToSeller = amountToSeller − fee`（`fee = floor(amountToSeller * feeBps / 10_000)`，`0 ≤ fee ≤ amountToSeller`）；
+    - 买方 Refund：`refundToBuyer = escrow − amountToSeller`；
+    - 服务商 Fee：`fee` 记入 `provider` 的可提余额；
+    金额为 0 的 `Fee` 记账可省略事件；
   - Forfeited：将原订单 `escrow` 全额计入 `forfeitBalance[tokenAddr]`（罚没），不记入任何用户余额。
   - Cancelled：将原订单 `escrow` 全额记入买方可提余额（Refund）。
 - 注：治理提款不属于用户提现路径；不改变订单维度的记账与聚合可提余额；不触发 `Balance{Credited,Withdrawn}` 事件；可在满足授权条件时独立执行。
@@ -204,6 +208,7 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 - INV.1 全额结清：`amountToSeller = escrow`（approve/timeout）。
 - INV.2 金额型结清：`amountToSeller = A` 且 `0 ≤ A ≤ escrow`（签名协商）。
 - INV.3 退款：`refundToBuyer = escrow − amountToSeller`（若 A < escrow）。
+ - INV.14 平台费（服务商）：当订单处于 Settled 终态时，若已固化 `provider, feeBps`，则按 `fee = floor(amountToSeller * feeBps / 10_000)` 计入服务商可提余额；必须满足 `0 ≤ fee ≤ amountToSeller`，且守恒成立：`(amountToSeller − fee) + (escrow − amountToSeller) + fee = escrow`。Cancelled/Forfeited 不产生平台费。
 
 ### 4.2 资金安全
 - INV.4 单次入账：每单至多一次将结清额/退款额入账至聚合余额（single_credit），防止重复计入可提余额。
@@ -307,18 +312,18 @@ function _safeTransferIn(token, subject, amount) internal {
 ## 6. API 与事件（最小充分集）
 （统一说明）错误命名在本章为“示例化”（如 `ErrXxx`），部署可采用等价错误名，但须保持语义、守卫与回滚路径一致。
 
-### 6.1 函数（最小集）
-- `createOrder(tokenAddr, contractor, dueSec, revSec, disSec) -> orderId`：创建订单，固化资产与时间锚点。
+-### 6.1 函数（最小集）
+- `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, provider, feeBps) -> orderId`：创建订单，固化资产与时间锚点、服务商与费率；`provider` MUST 在白名单内；`feeBps` MUST 等于 `providerFeeBps[provider]` 且满足 `0 ≤ feeBps ≤ 10_000`，若配置了全局上限 `bpsMax`，还需 `feeBps ≤ bpsMax`；固化后不得修改。
 - `createOrder(...)` 触发事件：`OrderCreated`。
-- `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, amount)`（payable） ：创建并立即充值指定金额（ETH：`msg.value == amount`；ERC‑20：`SafeERC20.safeTransferFrom(subject, this, amount)`）。
+- `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, provider, feeBps, amount)`（payable） ：创建并立即充值指定金额（ETH：`msg.value == amount`；ERC‑20：`SafeERC20.safeTransferFrom(subject, this, amount)`）；`provider/feeBps` 守卫与 `createOrder` 一致。
 - `createAndDeposit(...)` 触发事件：`OrderCreated`、`EscrowDeposited`（同一交易）。
 - `depositEscrow(orderId, amount)`（payable）：补充托管额，允许 client 或第三方赠与；入口遵守资产与冻结守卫。触发事件：`EscrowDeposited`。
 - `acceptOrder(orderId)`：承接订单，需 `subject == contractor`，并设置 `startTime`。触发事件：`Accepted`。
 - `markReady(orderId)`：卖方声明交付就绪，仅 `subject == contractor`，设置 `readyAt` 并启动评审窗口。触发事件：`ReadyMarked`。
-- `approveReceipt(orderId)`：买方验证交付并触发结清（`subject == client`）。触发事件：`Settled(actor=Client)` 与后续 `BalanceCredited（kind=Payout）` 记账。
-- `timeoutSettle(orderId)`：在评审超时后由任意主体触发全额结清。触发事件：`Settled(actor=Timeout)` 与后续 `BalanceCredited（kind=Payout）` 记账。
+- `approveReceipt(orderId)`：买方验证交付并触发结清（`subject == client`）。触发事件：`Settled(actor=Client)` 与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账。
+- `timeoutSettle(orderId)`：在评审超时后由任意主体触发全额结清。触发事件：`Settled(actor=Timeout)` 与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账。
 - `raiseDispute(orderId)`：进入争议状态，`subject ∈ {client, contractor}`，记录 `disputeStart`。触发事件：`DisputeRaised`。
-- `settleWithSigs(orderId, payload, sig1, sig2)`：争议期内按签名报文结清金额 A（守卫 `A ≤ escrow`）。触发事件：`AmountSettled` 与后续 `BalanceCredited（kind=Payout/Refund）` 记账（终态为 `Settled`）。
+- `settleWithSigs(orderId, payload, sig1, sig2)`：争议期内按签名报文结清金额 A（守卫 `A ≤ escrow`）。触发事件：`AmountSettled` 与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账（终态为 `Settled`）。
 - `timeoutForfeit(orderId)`：争议超时由任意主体触发对称没收。触发事件：`Forfeited(orderId, tokenAddr, amount)`。
 - `cancelOrder(orderId)`：根据守卫（G.E6/G.E7/G.E11）由 client 或 contractor 取消订单。触发事件：`Cancelled`，与后续 `BalanceCredited（kind=Refund）` 记账。
 - `withdraw(tokenAddr)`：提取累计收益或退款（Pull 语义，`nonReentrant`）；成功时触发 `BalanceWithdrawn` 事件。
@@ -328,25 +333,25 @@ function _safeTransferIn(token, subject, amount) internal {
    - Effects：`forfeitBalance[tokenAddr] -= amount`；将资产转给 `to`；ETH 使用 `call{value:amount}`，ERC‑20 使用 `SafeERC20.safeTransfer`。
    - Failure：MUST `revert`（`ErrUnauthorized/ErrAmountZero/ErrInsufficientForfeit` 等）。上述错误命名为示例，实施可采用等价错误名，但语义与守卫必须一致。
 - `commitEvidence(orderId, EvidenceCommitment)`：提交指定阶段的证据指纹；仅限订单参与者调用，可多次提交补充材料。触发事件：`EvidenceCommitted`。
-- `getOrder(orderId) view`：只读查询并返回 `{client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart}`。
-- `withdrawableOf(tokenAddr, account) view`：读取聚合可提余额（涵盖 Payout/Refund），便于钱包等组件展示与核对。
+- `getOrder(orderId) view`：只读查询并返回 `{client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart, provider, feeBps}`。
+- `withdrawableOf(tokenAddr, account) view`：读取聚合可提余额（涵盖 Payout/Refund/Fee），便于钱包等组件展示与核对。
 - `extendDue(orderId, newDueSec)`：client 单调延长履约窗口。触发事件：`DueExtended`（记录 old/new）。
 - `extendReview(orderId, newRevSec)`：contractor 单调延长评审窗口。触发事件：`ReviewExtended`（记录 old/new）。
 
 ### 6.2 事件（最小字段）
-- `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec)`：订单建立时触发，固化角色与时间参数。事件的 `block.timestamp` 视为 `startTime` 候选锚点。
+- `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, provider, feeBps)`：订单建立时触发，固化角色、时间参数与服务商/费率。事件的 `block.timestamp` 视为 `startTime` 候选锚点。
 - `EscrowDeposited(orderId, from, amount, newEscrow, via)`：托管额充值成功后触发，记录充值来源与调用通道；未启用受信路径时 `via = address(0)`。
 - `Accepted(orderId, escrow)`：承接订单（进入 Executing）时触发，确认当前托管额；`block.timestamp` 可作为 `startTime` 实际值校验。
 - `ReadyMarked(orderId, readyAt)`：卖方标记交付就绪时触发（进入 Reviewing），固化 `readyAt` 锚点。
 - `DisputeRaised(orderId, by)`：进入争议状态时触发，记录争议发起方。
 - `DueExtended(orderId, oldDueSec, newDueSec, actor)`：买方延长履约窗口时触发（单调增加，`actor == client`）。
 - `ReviewExtended(orderId, oldRevSec, newRevSec, actor)`：卖方延长评审窗口时触发（单调增加，`actor == contractor`）。
-- `Settled(orderId, amountToSeller, escrow, actor)`（`actor ∈ {Client, Timeout}`）：无争议或评审超时结清时触发；其中 `escrow` 指结清时刻的 E（订单变更前的托管额，用于计算 `Refund = escrow − amountToSeller`）；与后续 `BalanceCredited（kind=Payout）` 记账。
-- `AmountSettled(orderId, proposer, acceptor, amountToSeller, nonce)`：双方签名协商金额 A 后触发。
+- `Settled(orderId, amountToSeller, escrow, actor)`（`actor ∈ {Client, Timeout}`）：无争议或评审超时结清时触发；其中 `escrow` 指结清时刻的 E（订单变更前的托管额，用于计算 `Refund = escrow − amountToSeller`）；与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账（`kind=Fee` 金额为 0 时可不发事件）。
+- `AmountSettled(orderId, proposer, acceptor, amountToSeller, nonce)`：双方签名协商金额 A 后触发；与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账（终态为 `Settled`）。
 - `AssetUnsupported(orderId, tokenAddr)`（可选）：适配层或预检流程判定资产不受支持且事务成功返回时触发；若主流程以 `ErrAssetUnsupported` 回滚则不发该事件。
 - `Forfeited(orderId, tokenAddr, amount)`：争议期超时被没收时触发；记录资产与没收金额（用于分资产对账与统计）。其中 `amount` 指没收时刻订单托管额（订单变更前的 E）。
 - `Cancelled(orderId, cancelledBy)`（`cancelledBy ∈ {Client, Contractor}`）：订单被取消时触发；与后续 `BalanceCredited（kind=Refund）` 记账。
-- `BalanceCredited(orderId, to, tokenAddr, amount, kind)`（`kind ∈ {Payout, Refund}`）：结清/退款记账到可提余额时触发。
+- `BalanceCredited(orderId, to, tokenAddr, amount, kind)`（`kind ∈ {Payout, Refund, Fee}`）：结清/退款/平台费记账到可提余额时触发（`kind=Fee` 的金额为 0 时可不发事件）。
 - `BalanceWithdrawn(to, tokenAddr, amount)`：用户提现成功时触发。
  - `ProtocolFeeWithdrawn(tokenAddr, to, amount, actor)`：治理提款成功时触发；`actor` 为治理调用者。
 - `EvidenceCommitted(orderId, status, address actor, EvidenceCommitment evc)`：提交证据时触发；`status` 直接使用订单当前状态值（Initialized/Executing/Reviewing/Disputing/Settled/Forfeited），`actor` 等于解析后 `subject`。字段边界见 §6.4 数据结构。
@@ -404,7 +409,7 @@ function _safeTransferIn(token, subject, amount) internal {
 
 #### 计数与去重规则（口径约束）
 - 每单仅一次：`OrderCreated/Accepted/ReadyMarked/DisputeRaised/Settled/AmountSettled/Forfeited/Cancelled`。
-- `BalanceCredited`：按 `kind ∈ {Payout, Refund}` 去重——每单每种 kind 至多 1 次（因此每单最多 2 次：一次给卖方 Payout，一次给买方 Refund）。
+- `BalanceCredited`：按 `kind ∈ {Payout, Refund, Fee}` 去重——每单每种 kind 至多 1 次（因此每单最多 3 次：一次给卖方 Payout，一次给买方 Refund，一次给服务商 Fee；`kind=Fee` 金额为 0 时可不发事件）。
 - 可重复事件（订单维度）：
   - `EscrowDeposited`（允许多次充值或第三方赠与）
   - `BalanceWithdrawn`（余额领取可多次提取）
@@ -494,7 +499,11 @@ function _safeTransferIn(token, subject, amount) internal {
 - 签名域绑定：订单/资产/数额/截止/链标识/随机数；跨单/跨链/过期/域错路径测试。
 - Pull/CEI/授权/重入：提现前清零、`nonReentrant`、授权校验与来源记录。
 - 非标资产：由适配层与白名单策略处理；异常资产路径显式失败。
- - 治理提款：实现 `forfeitBalance` 记账、`onlyGovernance` 守卫、CEI 顺序与 `nonReentrant`、ETH/ERC‑20 余额差核验；失败路径返回自定义错误（如 `ErrUnauthorized/ErrInsufficientForfeit`）。
+- 治理提款：实现 `forfeitBalance` 记账、`onlyGovernance` 守卫、CEI 顺序与 `nonReentrant`、ETH/ERC‑20 余额差核验；失败路径返回自定义错误（如 `ErrUnauthorized/ErrInsufficientForfeit`）。
+ - 服务商平台费（结清记账）：
+   - 存储：`isProvider[addr]` 白名单、`providerFeeBps[addr]` 默认费率、可选全局上限 `bpsMax`；订单侧固化 `provider, feeBps`；
+   - 守卫：创建时校验地址在白名单、`feeBps == providerFeeBps[provider]` 且 `0 ≤ feeBps ≤ 10_000`（若设 `bpsMax`：`feeBps ≤ bpsMax`）；
+   - 结清：统一内部函数按 `fee = floor(A*bps/10_000)` 记账三笔 `Payout/Refund/Fee`（金额为 0 的 `Fee` 事件可省略），订单 `escrow` 清零；Cancelled/Forfeited 不计费。
 
 ### 12.2 测试与验证（代表性）
 - 代表性用例：无争议全额/签名金额/超时没收；覆盖 A≤E、计时器边界、Pull/CEI、授权与签名重放。
@@ -522,6 +531,7 @@ function _safeTransferIn(token, subject, amount) internal {
 - `E` 托管额；`A` 结清额；`V` 买方价值；`C` 卖方成本；
 - `D_due/D_rev/D_dis` 履约/评审/争议窗口；`startTime/readyAt/disputeStart` 锚点；
 - `ForfeitPool` 罚没逻辑账户（默认沉淀；仅治理提款；默认用于协议费用，其他用途须经社区决议）。
+ - `Provider` 服务商（第三方服务平台，白名单内）；`feeBps` 费率（bps，1/10_000）；`fee = floor(A*feeBps/10_000)`；`payoutToSeller = A − fee`。
 
 ### 16.2 指标与事件口径表（简）
 - 事件：`OrderCreated/EscrowDeposited/Accepted/DisputeRaised/Settled/AmountSettled/Forfeited/Cancelled/Balance{Credited,Withdrawn}`。
