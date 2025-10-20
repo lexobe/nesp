@@ -1,13 +1,13 @@
 # A2A 无仲裁托管结算协议（NESP）规范
 English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
-副题：信任最小化 · 限时争议 · 对称没收威慑 · 零手续费 (Trust‑Minimized · Timed‑Dispute · Symmetric‑Forfeit (Deterrence) · Zero‑Fee)
+副题：信任最小化 · 限时争议 · 对称没收威慑 (Trust‑Minimized · Timed‑Dispute · Symmetric‑Forfeit (Deterrence))
 
 发布状态：正式颁布版（Release）
 版本：0.1
 发布日期：2025-09-30
 
 概述（信息性）
-- NESP 是面向 A2A 的无仲裁托管结算协议：买方先将应付资金 E 托管至合约，卖方接单并交付；无争议一次性全额放款 E；发生分歧则在争议期内以可验证签名协商结清金额 A（A≤E），差额返还买方；逾期未合意则对称没收托管资金 E 以形成威慑；零协议费（不含 gas）。
+- NESP 是面向 A2A 的无仲裁托管结算协议：买方先将应付资金 E 托管至合约，卖方接单并交付；无争议一次性全额放款 E；发生分歧则在争议期内以可验证签名协商结清金额 A（A≤E），差额返还买方；逾期未合意则对称没收托管资金 E 以形成威慑。
 
 核心流程
 - Step 1 托管：买方把应付款先存入托管账户（E）。
@@ -15,8 +15,8 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 - Step 3 验收放款（无争议）：买方验收通过，托管款一次性全额打给卖方（E）。
 - Step 4 发起争议（如有）：在限定时间内提出分歧。
 - Step 5 限时协商：双方在争议期内商定付款数额 A（A≤E）→ 按 A 付款，剩余返还买方。
-- Step 6 超时威慑：若超时仍未达成一致，则对称没收这笔托管款（双方都拿不到，划入 ForfeitPool）。
-- 说明：无平台仲裁；协议本身不收取手续费。
+- Step 6 超时威慑：若超时仍未达成一致，则对称没收这笔托管款（双方都拿不到，划入 ForfeitPool；罚没资产默认沉淀于协议，可由治理模块提取用于协议费用；其他用途须经社区决议授权）。
+- 说明：无平台仲裁。
 
 ## 0) 规范与追溯锚点
 - 规范用语：MUST/SHOULD/MAY/MUST NOT。
@@ -31,7 +31,6 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 - MUST NOT：将仲裁、信誉、治理投票等社会层逻辑内置到共识。
 - MUST：协议仅提供可验证状态、事件与记账（Pull 结算）。
 - MUST：金额口径仅以托管额 E 与结清额 A 表达（链上仅记录托管与结清）。
-- MUST：零协议费（Zero‑Fee）：协议/合约不收取任何协议内手续费；仅存在链上 gas 成本（不含任何代付/补贴）。任何入口不得从 E/A 中扣除协议费。
 - MUST：唯一机制：线下协商应付金额 → 买方上链托管相应资金 E；线下验收 → 链上确认，全额结清；争议路径采用签名协商金额结清（见 §4）。
 - MUST：资金仅经由 `depositEscrow` 单调增加；不支持减少或替换托管；订单创建不要求金额（escrow 初始为 0）。
 - SHOULD：`acceptOrder`（承接）仅在“托管额满足线下协商的应付金额”时进行（产品层闸门），实现层可选检查 `escrow > 0`。
@@ -99,46 +98,92 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 
 
 ### 3.1 状态不变动作（SIA，MUST）
- - SIA1：`extendDue(orderId, newDueSec)` 要求 `newDueSec > 当前 D_due`（严格延后），调用主体 `subject` MUST 等于 `client`。
- - SIA2：`extendReview(orderId, newRevSec)` 要求 `newRevSec > 当前 D_rev`（严格延后），调用主体 `subject` MUST 等于 `contractor`。
- - SIA3：`depositEscrow(orderId, amount)`（`payable`）要求 `amount > 0`，且 `escrow ← escrow + amount`（单调增加）。
-  - 调用主体 `subject` 可分两类：
-    1. 受信任的 2771/4337 路径：实现 MUST 解析 `subject` 并验证 `subject == client`；失败 MUST `revert`（`ErrUnauthorized`）；
-    2. 其他任意地址：视为自担没收风险的无条件赠与（不改变订单权利义务），但该地址仍需完成转账（见下）。
-  - 入口顺序：`state ∈ {Disputing}` → `ErrFrozen`；`state ∈ {Settled, Forfeited, Cancelled}` → `ErrInvalidState`；其余进入金额/资产校验。
-  - 若订单资产为原生 ETH：MUST `msg.value == amount`；
-  - 若为 ERC‑20：MUST `msg.value == 0`，并定义 `payer ≡ subject`；实现 MUST 调用 `SafeERC20.transferFrom(payer, this, amount)` 成功后记账——
-    - 对于受信路径（payer = client），意味着从 client 账户扣划；
-    - 对于其他地址（赠与），payer = 调用主体，需自行授权或预先批准上述转账。
-- 适用范围：SIA3 允许于 Initialized/Executing/Reviewing；在 Disputing 及任何终态禁止充值（Top‑up）。
+- SIA1 `extendDue(orderId, newDueSec)`：
+  - Condition：`newDueSec > 当前 D_due`（严格延后）。
+  - Subject：`client`。
+  - Effects：`D_due` 更新为 `newDueSec` 并发出 `DueExtended`。
+  - Failure：条件未满足 MUST `revert`（`ErrInvalidState`）。
+- SIA2 `extendReview(orderId, newRevSec)`：
+  - Condition：`newRevSec > 当前 D_rev`（严格延后）。
+  - Subject：`contractor`。
+  - Effects：`D_rev` 更新为 `newRevSec` 并发出 `ReviewExtended`。
+  - Failure：条件未满足 MUST `revert`（`ErrInvalidState`）。
+- SIA3 `depositEscrow(orderId, amount)`（`payable`）：
+  - Condition：`amount > 0`；`state ∈ {Initialized, Executing, Reviewing}`；当订单资产为 ETH 时 MUST `msg.value == amount`，为 ERC‑20 时 MUST `msg.value == 0` 且 `SafeERC20.transferFrom(payer, this, amount)` 成功。
+  - Subject：
+    - 受信任的 2771/4337 路径：解析得到的 `subject` MUST 等于 `client`；
+    - 其他任意地址：视为赠与主体，须自行完成授权并承担没收风险。
+  - Effects：`escrow ← escrow + amount`（单调增加），触发 `EscrowDeposited`。
+  - Failure：
+    - `state ∈ {Disputing, Settled, Forfeited, Cancelled}` MUST `revert`（`ErrFrozen` 或 `ErrInvalidState`）；
+    - 主体不符 MUST `revert`（`ErrUnauthorized`）；
+    - 资产/转账校验失败 MUST `revert`（`ErrAssetUnsupported` 或等效错误）。
 
 ### 3.2 守卫与副作用（MUST）
-- 参数持久化（MUST）：实现必须在订单建立/接受时持久化记录 `D_due/D_rev/D_dis` 的初值（来自双方协商）；不得在链上以“隐式默认”替代缺失值。
-- startTime/readyAt/disputeStart 为一次性锚点（设置后 MUST NOT 回拨或重置）；`D_due/D_rev` 仅允许单调延长；不提供 extendDispute。
+- 统一规则（MUST）：所有守卫以 `{Condition, Subject, Effects, Failure}` 描述，未列出的路径一律禁止。
+- 参数持久化（MUST）：订单建立/接受时必须固化 `D_due/D_rev/D_dis` 的实际值；不得依赖链上“隐式默认”。
+- 锚点一次性（MUST）：`startTime/readyAt/disputeStart` 设置后不得回拨或覆写；`D_due/D_rev` 仅允许单调延长，协议不提供 `extendDispute`。
 - 调用主体（Resolved Subject）定义：
   - 直连：`subject = msg.sender`，`via = address(0)`；
-  - EIP‑2771：若 `isTrustedForwarder(msg.sender)=true`，`subject = _msgSender()`（由受信转发器解析的原始调用者）；
-  - EIP‑4337：若 `msg.sender == EntryPoint`，`subject = userOp.sender`（账户地址）。
+  - EIP‑2771：若 `isTrustedForwarder(msg.sender)=true`，`subject = _msgSender()`；
+  - EIP‑4337：若 `msg.sender == EntryPoint`，`subject = userOp.sender`。
 
-- 主体约束（MUST）：
-  - `markReady(orderId)`：`subject == contractor`；
-  - `approveReceipt(orderId)`、`extendDue(orderId, newDueSec)`：`subject == client`；
-  - `extendReview(orderId, newRevSec)`：`subject == contractor`；
-  - `raiseDispute(orderId)`：`subject ∈ {client, contractor}`；
-  - `cancelOrder(orderId)`：按照守卫分支检查 `subject == client`（G.E6）或 `subject == contractor`（G.E7/G.E11）；
-  - `settleWithSigs(orderId, …)`：`subject ∈ {client, contractor}`；
-  - `timeoutSettle(orderId)`、`timeoutForfeit(orderId)`：主体不限制（任意地址可触发）。
-
-- G.E1：`acceptOrder` 仅当 `state=Initialized`，且调用主体 `subject` MUST 等于订单的 `contractor`；否则 MUST `revert`（`ErrUnauthorized`）。副作用：`startTime = now`（首次进入 Executing 时设置锚点）。允许在创建入口以 0 显式选择协议默认值（见 §2.1），但入库/事件必须写入替换后的具体秒数；不得在链上以“隐式默认”（未设置字段留空或依赖合约级缺省）替代缺失值。
-- G.E3：`markReady` 仅当 `now < startTime + D_due`；副作用：设置 `readyAt=now` 并（重新）起算评审计时 `D_rev`。
- - G.E4/E8：`approveReceipt` 仅适用于 `state ∈ {Executing, Reviewing}`（Disputing 不适用）。
- - G.E9：`timeoutSettle` 仅当 `state=Reviewing` 且 `now ≥ readyAt + D_rev`。
- - G.E5/E10：`raiseDispute` 允许于 Executing/Reviewing 任意时刻进入 Disputing；副作用：设置 `disputeStart=now`。进入 Disputing 后，托管额 E MUST 冻结；任何形式的充值/加仓 MUST `revert`（ErrFrozen；见 SIA3 状态限制）。
- - G.E11：`cancelOrder`（contractor）仅当 `state=Reviewing`。
- - G.E13：`timeoutForfeit` 仅当 `state=Disputing` 且 `now ≥ disputeStart + D_dis`。
- - G.E6：`cancelOrder`（client）仅当“从未 Ready（`readyAt` 未设置）且 `now ≥ startTime + D_due`”。
- - G.E7：`cancelOrder`（contractor）允许（无额外守卫）。
- - G.E12：`settleWithSigs` 仅当 `state=Disputing`，且 `amountToSeller ≤ E` 并通过 EIP‑712/1271 签名、nonce、deadline 校验。
+- 守卫条目（MUST）：
+  - G.E1 `acceptOrder`：
+    - Condition：`state = Initialized`。
+    - Subject：`contractor`（经受信路径解析后）。
+    - Effects：状态转入 Executing，并设置 `startTime = now`。
+    - Failure：条件未满足 MUST `revert`（`ErrInvalidState` 或 `ErrUnauthorized`）。
+  - G.E3 `markReady`：
+    - Condition：`state = Executing` 且 `now < startTime + D_due`。
+    - Subject：`contractor`。
+    - Effects：状态转入 Reviewing，并设置 `readyAt = now`（重新起算 `D_rev`）。
+    - Failure：条件未满足 MUST `revert`。
+  - G.E4/G.E8 `approveReceipt`：
+    - Condition：`state ∈ {Executing, Reviewing}`。
+    - Subject：`client`。
+    - Effects：结清金额 `amountToSeller = escrow`，状态转入 Settled。
+    - Failure：条件未满足 MUST `revert`。
+  - G.E5 `raiseDispute`（执行阶段）：
+    - Condition：`state = Executing` 且 `now < startTime + D_due`。
+    - Subject：`client` 或 `contractor`。
+    - Effects：状态转入 Disputing，设置 `disputeStart = now`，托管额 E 冻结（禁止后续充值）。
+    - Failure：条件未满足 MUST `revert`。
+  - G.E10 `raiseDispute`（评审阶段）：
+    - Condition：`state = Reviewing` 且 `now < readyAt + D_rev`。
+    - Subject：`client` 或 `contractor`。
+    - Effects：状态转入 Disputing，保持/设置 `disputeStart = now` 并冻结托管额。
+    - Failure：条件未满足 MUST `revert`。
+  - G.E6 `cancelOrder`（client）：
+    - Condition：`state = Executing`、`readyAt` 未设置，且 `now ≥ startTime + D_due`。
+    - Subject：`client`。
+    - Effects：状态转入 Cancelled。
+    - Failure：条件未满足 MUST `revert`。
+  - G.E7 `cancelOrder`（contractor，执行阶段）：
+    - Condition：`state = Executing`。
+    - Subject：`contractor`。
+    - Effects：状态转入 Cancelled。
+    - Failure：条件未满足 MUST `revert`。
+  - G.E9 `timeoutSettle`：
+    - Condition：`state = Reviewing` 且 `now ≥ readyAt + D_rev`。
+    - Subject：任意地址。
+    - Effects：结清金额 `amountToSeller = escrow`，状态转入 Settled。
+    - Failure：条件未满足 MUST `revert`。
+  - G.E11 `cancelOrder`（contractor，评审阶段）：
+    - Condition：`state = Reviewing`。
+    - Subject：`contractor`。
+    - Effects：状态转入 Cancelled。
+    - Failure：条件未满足 MUST `revert`。
+  - G.E12 `settleWithSigs`：
+    - Condition：`state = Disputing`，`now < disputeStart + D_dis`，`amountToSeller ≤ escrow`，并通过 EIP‑712/1271 签名、`nonce`、`deadline` 校验。
+    - Subject：`client` 或 `contractor`。
+    - Effects：按签名金额结清（`amountToSeller = A`），状态转入 Settled。
+    - Failure：条件未满足 MUST `revert`（`ErrBadSig/ErrReplay/ErrExpired/ErrOverEscrow` 等）。
+- G.E13 `timeoutForfeit`：
+    - Condition：`state = Disputing` 且 `now ≥ disputeStart + D_dis`。
+    - Subject：任意地址。
+    - Effects：状态转入 Forfeited，订单托管额全额计入 ForfeitPool（增加 `forfeitBalance[tokenAddr]`），订单 `escrow` 清零；罚没资产继续由治理模块托管，可在满足授权条件时提取。
+    - Failure：条件未满足 MUST `revert`。
 
 ### 3.3 终态约束（MUST）
 - `Settled/Forfeited/Cancelled` 为终态；到达终态后不得再改变状态或资金记账；仅允许提现型入口读取并领取既有可领额（若有）。
@@ -154,14 +199,15 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - INV.6 入口前抢占：外部入口先处理 `timeout*`，防延迟攻击。
   - INV.7 资产与对账：SafeERC20 + 余额差核验；必要时采用白名单/适配层。对“费率/重基/非标准”代币如无法保证恒等对账，MUST `revert`（ErrAssetUnsupported）。
 - 资金去向与兼容
-  - INV.8 Forfeited：`escrow → ForfeitPool`（不向外部分配），`owed/refund` 清零。ForfeitPool 为合约内的逻辑账户：罚没资产留存在本合约余额中，不向任何外部地址（含零地址/黑洞）转移；ETH 与 ERC‑20 采用一致语义（无额外转账/销毁）。
+  - INV.8 Forfeited：`escrow → ForfeitPool`（治理可控提取），`owed/refund` 清零。ForfeitPool 为合约内逻辑账户：罚没资产默认留存在合约余额，仅能在满足治理授权（协议费用或经社区授权的用途）时，由治理模块调用治理提款接口转出；ETH 与 ERC‑20 采用一致语义。
+    - 记账不变量：维护 `forfeitBalance[tokenAddr]`；Forfeited 时增加，治理提款时减少；MUST 满足 `forfeitBalance[tokenAddr] ≥ 0`。
+    - 全量资金恒等式（审计）：分 `tokenAddr` 核对“合约资产余额 = Σ 未终态订单 escrow + Σ 用户聚合可提余额 + forfeitBalance”。
   - INV.9 比例路径兼容（可选）：`amountToSeller = floor(escrow * num / den)`；余数全部计入买方退款。实现 MUST 使用安全的“mulDiv 向下取整”或等效无溢出实现；任何溢出/下溢 MUST revert；禁止四舍五入与精度提升。
- - INV.10 Pull 语义：状态变更仅“记账可领额”（聚合到 `balance[token][addr]`），实际转账仅在 `withdraw(token)` 发生；禁止在状态变更入口直接 `transfer`。
+- INV.10 Pull 语义：状态变更仅“记账可领额”（聚合到 `balance[token][addr]`），实际转账仅在 `withdraw(token)` 发生；治理提款为系统级外流，不属于用户 `withdraw(token)`，但须满足 INV.8 与安全约束；禁止在状态变更入口直接 `transfer`。
   - INV.11 锚点一次性：`startTime/readyAt/disputeStart` 一旦设置，MUST NOT 修改或回拨（仅允许“未设置 → 设置一次”）。
   - INV.12 计时器规则：`D_due/D_rev` 仅允许延后（单调增加，且在进入 Disputing 前）；`D_dis` 固定且不可延长。
   - INV.13 唯一机制：无争议路径必须全额结清；争议路径采用签名金额结清；金额口径始终满足 `A ≤ E`，链上仅记录托管与结清。
 
-  - INV.14 零协议费恒等式：任一结清/没收动作发生时，满足 `escrow_before = amountToSeller + refundToBuyer` 或（没收）`escrow_before = forfeited`；不允许出现协议费扣减。违反恒等式的路径 MUST `revert`（ErrFeeForbidden）。
 
 ## 5) 安全与威胁模型
 - 签名与重放（MUST）：采用 EIP‑712/1271；签名域至少包含 `{chainId, contract, orderId, amountToSeller(=A), proposer, acceptor, nonce, deadline}`；`amountToSeller ≤ E`；`nonce` 的作用域至少为 `{orderId, signer}` 且一次性消费；`deadline` 基于 `block.timestamp` 判定。必须防止跨订单/跨合约/跨链重放。
@@ -173,7 +219,6 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - 争议冻结期充值 → `ErrFrozen`
   - 终态/非法状态的入口调用 → `ErrInvalidState`
   - 托管不足/超额 → `ErrOverEscrow`
-  - 违反零协议费恒等式 → `ErrFeeForbidden`
   - 非标准/不支持资产 → `ErrAssetUnsupported`
 - 重入与交互顺序：提现 `nonReentrant`，遵循 CEI。
 - 时间边界：统一区块时间；`D_due/D_rev` 仅允许延后（单调），`D_dis` 固定且不可延长。
@@ -187,25 +232,50 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 
 ## 7) API 与事件契约（映射状态机/不变量）
 - 函数（最小集）：
-  - `createOrder(tokenAddr, contractor, dueSec, revSec, disSec) -> orderId`
+  - `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, provider, feeBps) -> orderId`
     - 零值采用默认（MUST）：若 `dueSec/revSec/disSec` 传入 0，表示采用协议默认值（`1d/1d/7d`）；事件 `OrderCreated` 中的 `dueSec/revSec/disSec` 必须记录替换后的“生效值”（非 0）。
-  - `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, amount)`（payable）→ 创建并充值（ETH: `msg.value==amount`；ERC‑20: `transferFrom` amount）
+  - `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, provider, feeBps, amount)`（payable）→ 创建并充值（ETH: `msg.value==amount`；ERC‑20: `SafeERC20.safeTransferFrom` amount）
   - `depositEscrow(orderId, amount)`（payable；同上资产规则）
   - `acceptOrder(orderId)`；`markReady(orderId)`；`approveReceipt(orderId)`；`timeoutSettle(orderId)`
   - `raiseDispute(orderId)`；`settleWithSigs(orderId, payload, sig1, sig2)`；`timeoutForfeit(orderId)`
-  - `cancelOrder(orderId)`；`withdraw(tokenAddr)`
+  - `cancelOrder(orderId)`
+  - `withdraw(tokenAddr)`：提取累计收益或退款（Pull 语义，`nonReentrant`），成功时触发 `BalanceWithdrawn`。
+  - `withdrawForfeit(tokenAddr, to, amount)`：治理模块调用，从 ForfeitPool 中提取指定资产；成功时触发 `ProtocolFeeWithdrawn`。
   - `extendDue(orderId, newDueSec)`；`extendReview(orderId, newRevSec)`（单调延后）
- - 事件（建议的最小充分字段；单一清单）：
-  - `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, ts)`
-  - `EscrowDeposited(orderId, from, amount, newEscrow, ts, via)`；`Accepted(orderId, escrow, ts)`；`DisputeRaised(orderId, by, ts)`
+  - `commitEvidence(orderId, evc)`：订单参与者提交证据承诺；可多次调用；触发 `EvidenceCommitted`
+- 事件（建议的最小充分字段；单一清单）：
+  - `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, provider, feeBps)`
+  - `EscrowDeposited(orderId, from, amount, newEscrow, via)`；`Accepted(orderId, escrow)`；`ReadyMarked(orderId, readyAt)`；`DisputeRaised(orderId, by)`
     - 字段口径：`via ∈ {address(0), forwarderAddr, entryPointAddr}`；`address(0)` 表示直接调用（`msg.sender == tx.origin`）；2771 记录转发合约地址，且 `isTrustedForwarder(via)=true`；4337 记录实现配置的 `EntryPoint` 地址。除上述三类外的合约调用 MUST `revert`（ErrUnauthorized）。不支持多重转发/嵌套；如检测到多跳 MUST `revert`（ErrUnauthorized）。授权失败为回滚路径，不发 `EscrowDeposited` 事件。
-  - `Settled(orderId, amountToSeller, escrow, ts, actor)`（`actor ∈ {Client, Timeout}`）
-  - `AmountSettled(orderId, proposer, acceptor, amountToSeller, nonce, ts)`
-  - `AssetUnsupported(orderId, tokenAddr, ts)`（可选；仅当适配层在配置/预检流程中判定资产不支持且事务成功返回时发射；主流程内若以 `ErrAssetUnsupported` 回滚则不发。唯一性：同一 `orderId`/`tokenAddr` 在同一版本配置周期内最多发射一次，重复预检不得重复发射。）
-  - `Forfeited(orderId, ts)`；`Cancelled(orderId, ts, cancelledBy)`（`cancelledBy ∈ {Client, Contractor}`）
-  - `BalanceCredited(orderId, to, tokenAddr, amount, kind, ts)`（`kind ∈ {Payout, Refund}`）
-  - `BalanceWithdrawn(to, tokenAddr, amount, ts)`
-- 错误（示例）：ERR.1 `ErrInvalidState`；ERR.2 `ErrGuardFailed`；ERR.3 `ErrAlreadyPaid`；ERR.4 `ErrExpired`；ERR.5 `ErrBadSig`；ERR.6 `ErrOverEscrow`；ERR.7 `ErrFrozen`；ERR.8 `ErrFeeForbidden`；ERR.9 `ErrAssetUnsupported`；ERR.10 `ErrReplay`；ERR.11 `ErrUnauthorized`。
+  - `DueExtended(orderId, oldDueSec, newDueSec, actor)`（`actor == client`）；`ReviewExtended(orderId, oldRevSec, newRevSec, actor)`（`actor == contractor`）
+  - `Settled(orderId, amountToSeller, escrow, actor)`（`actor ∈ {Client, Timeout}`）
+  - `AmountSettled(orderId, proposer, acceptor, amountToSeller, nonce)`
+  - `AssetUnsupported(orderId, tokenAddr)`（可选；仅当适配层在配置/预检流程中判定资产不支持且事务成功返回时发射；主流程内若以 `ErrAssetUnsupported` 回滚则不发。唯一性：同一 `orderId`/`tokenAddr` 在同一版本配置周期内最多发射一次，重复预检不得重复发射。）
+  - `Forfeited(orderId, tokenAddr, amount)`；`Cancelled(orderId, cancelledBy)`（`cancelledBy ∈ {Client, Contractor}`）
+  - `BalanceCredited(orderId, to, tokenAddr, amount, kind)`（`kind ∈ {Payout, Refund, Fee}`）
+  - `BalanceWithdrawn(to, tokenAddr, amount)`
+  - `ProtocolFeeWithdrawn(tokenAddr, to, amount, actor)`
+  - `EvidenceCommitted(orderId, status, address actor, EvidenceCommitment evc)`
+  - 说明：事件不再携带显式时间字段，统一以日志所在区块的 `block.timestamp` 作为时间锚点。
+
+#### 7.A 证据承诺（Evidence Commitments，规范性）
+#### 7.A 证据承诺（Evidence Commitments，规范性）
+- 目的：在不改变结算主流程的前提下，为关键阶段输出可验证的离链证据指纹，用于审计与 SLO 观测。
+- 数据结构（MUST）：`EvidenceCommitment = {hash:bytes32, uri:string≤256, alg:string}`。`alg` 建议填入内容寻址或强哈希算法名称（如 `ipfs-cid`、`sha256`、`keccak256`）；也可采用自描述 multihash。
+- 实现形态（MUST）：主合约直接暴露 `commitEvidence(orderId, evc)` 入口；若未来拆分模块，接口与事件格式需保持一致。
+- 接口约束（MUST）：
+  1. 调用主体限于订单参与者（`client` 或 `contractor`），`actor = 解析后的 subject`（直连/2771/4337）；合约直接读取订单当前状态并写入事件 `status`。
+  2. 单次调用仅接受 1 条 `EvidenceCommitment`；如需补充，可多次调用。实现需校验 `uri` 为 UTF‑8 且长度 ≤ 256 字节，`hash` 建议来源于 JCS 规范化后的离链清单或内容寻址指纹。
+  3. 若 `uri` 为位置式 URL（如 `https://`），调用者 MUST 同步提供强哈希；推荐使用 `ipfs://CIDv1`、`ar://TXID`、`ni://` 等内容寻址方案。
+  4. 部署可在应用层或离线服务中提示参与者在 `acceptOrder/markReady/settleWithSigs/timeout*` 等关键动作后自行调用本接口，但主合约不得代表参与者代为提交。
+- Manifest 与工具链（信息性）：
+  1. 推荐遵循 `nesp-evc-1.0` JSON 清单规范，先经 **JCS（RFC 8785）** 规范化后取哈希，作为 `evc.hash`。
+  2. 大包或隐私场景可在 Manifest 中扩展 `merkleRoot`、`encryption` 等字段，仅公开必要证明。
+  3. 官方 CLI/SDK 可提供“生成 Manifest → 规范化 → 计算哈希 → 上传（IPFS/Arweave）→ 调用 `commitEvidence`”的一键流程，减少人工差错。
+- 运维要求（MUST）：
+  - `EvidenceCommitted(orderId, status, actor, evc)` 事件是 SLO 观测来源；部署方必须监控缺失或延迟并在 Runbook 中定义补交流程。
+  - 可按业务设定阶段性提交时限（如 `markReady` 后 ≤ 1 小时）；若超时缺失，应触发告警。
+- 错误（示例）：ERR.1 `ErrInvalidState`；ERR.2 `ErrGuardFailed`；ERR.3 `ErrAlreadyPaid`；ERR.4 `ErrExpired`；ERR.5 `ErrBadSig`；ERR.6 `ErrOverEscrow`；ERR.7 `ErrFrozen`；ERR.8 `ErrAssetUnsupported`；ERR.9 `ErrReplay`；ERR.10 `ErrUnauthorized`。
 - 映射规则（MUST）：E.x ↔ API/EVT ↔ INV.x ↔ MET.x/GOV.x 一一可追溯。
  - （工程建议）资产支持与适配层细节见平台工程文档。
 
@@ -215,10 +285,11 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - MET.2 提现失败率、重试率；
   - MET.3 资金滞留余额；
   - MET.4 争议时长分布、协商接受率（公式：协商接受率 = `AmountSettled` 事件数 / `DisputeRaised` 事件数；建议观测窗口 7/30 天滚动；撤销/过期不计入分子；每单仅计首个 `AmountSettled`；跨窗口滚动按事件时间戳归属；分母按“同一订单在结清/没收前的首次 `DisputeRaised` 计 1 次”，重复触发/撤销不重复计数）。
-  - MET.5 零协议费违规计数：期望为 0（来源：回执内 `ErrFeeForbidden` 回滚次数；因回滚不发事件，需基于交易回执/节点日志；离线对账作为辅证）。
-  - MET.6 状态转换延迟/吞吐（E1/E3/E5/E10 等非终态转换的时延与速率）；
+  - MET.5 状态转换延迟/吞吐（E1/E3/E5/E10 等非终态转换的时延与速率）；
   - GOV.1 终态分布（成功/没收/取消）；
+- 证据承诺观测：建议将 `EvidenceCommitted` 事件的提交率与延迟纳入 MET.5 衍生报表，并对缺失事件发出运维告警。
 - GOV.2 `A/E` 基线分布（以进入 Reviewing 或 Disputing 时的 E 为基线，见 VER）。
+- GOV.4 ForfeitPool 使用台账：统计没收累计额、提现金额，校验 `forfeitBalance` 不为负；公开用途分类（协议费用/社区授权用途）。
 - SLO（示例）：提现成功率 ≥ 99.9%；结清到账 P50 < 1 区块、P95 < 3 区块；资金滞留余额 < 0.1%（周）。
 - 熔断/回滚：超阈触发“切换白名单/停写/回滚”剧本（与第10、11章联动）。
 
@@ -243,17 +314,18 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
  - Trace.1：E4（Executing->Settled，approveReceipt） -> API: `approveReceipt` -> INV.1 -> EVT: `Settled` -> MET: 结清延迟/资金滞留。
  - Trace.2：E12（Disputing->Settled，settleWithSigs） -> API: `settleWithSigs` -> INV.2 -> EVT: `AmountSettled, Settled` -> MET: 争议时长/协商接受率。
  - Trace.3：E13（Disputing->Forfeited，timeoutForfeit） -> API: `timeoutForfeit` -> EVT: `Forfeited` -> GOV: 没收率/争议时长。
+- Trace.4：ForfeitPool 治理提现 -> API: `withdrawForfeit` -> INV.8 -> EVT: `ProtocolFeeWithdrawn` -> GOV: GOV.4（用途审计）。
 全量映射（覆盖所有允许的转换；至少一项指标；编号对齐）：
-- E1 Initialized->Executing（acceptOrder） -> API: `acceptOrder` -> INV: INV.11 -> EVT: `Accepted` -> MET: MET.6（接单延迟）。
+- E1 Initialized->Executing（acceptOrder） -> API: `acceptOrder` -> INV: INV.11 -> EVT: `Accepted` -> MET: MET.5（接单延迟）。
 - E2 Initialized->Cancelled（cancel） -> API: `cancelOrder` -> INV: INV.3（退款计算） -> EVT: `Cancelled` -> GOV: GOV.1。
-- E3 Executing->Reviewing（markReady） -> API: `markReady` -> INV: INV.11 -> EVT: (none) -> MET: MET.6（执行->评审时延）。
+- E3 Executing->Reviewing（markReady） -> API: `markReady` -> INV: INV.11 -> EVT: `ReadyMarked` -> MET: MET.5（执行->评审时延）。
 - E4 Executing->Settled（approveReceipt） -> API: `approveReceipt` -> INV.1 -> EVT: `Settled` -> MET: MET.1/MET.3。
- - E5 Executing->Disputing（raiseDispute） -> API: `raiseDispute` -> INV: INV.11 -> EVT: `DisputeRaised` -> MET: MET.6（争议触发时延）。
+ - E5 Executing->Disputing（raiseDispute） -> API: `raiseDispute` -> INV: INV.11 -> EVT: `DisputeRaised` -> MET: MET.5（争议触发时延）。
 - E6 Executing->Cancelled（cancel: Client 条件） -> API: `cancelOrder` -> INV: INV.3 -> EVT: `Cancelled` -> GOV: GOV.1。
 - E7 Executing->Cancelled（cancel: Contractor） -> API: `cancelOrder` -> INV: INV.3 -> EVT: `Cancelled` -> GOV: GOV.1。
 - E8 Reviewing->Settled（approveReceipt） -> API: `approveReceipt` -> INV: INV.1 -> EVT: `Settled` -> MET: MET.1/MET.3。
 - E9 Reviewing->Settled（timeoutSettle） -> API: `timeoutSettle` -> INV: INV.1 -> EVT: `Settled` -> MET: MET.1。
- - E10 Reviewing->Disputing（raiseDispute） -> API: `raiseDispute` -> INV: INV.11 -> EVT: `DisputeRaised` -> MET: MET.6（争议触发时延）。
+ - E10 Reviewing->Disputing（raiseDispute） -> API: `raiseDispute` -> INV: INV.11 -> EVT: `DisputeRaised` -> MET: MET.5（争议触发时延）。
 - E11 Reviewing->Cancelled（cancel: Contractor） -> API: `cancelOrder` -> INV: INV.3 -> EVT: `Cancelled` -> GOV: GOV.1。
 - E12 Disputing->Settled（settleWithSigs） -> API: `settleWithSigs` -> INV: INV.2 -> EVT: `AmountSettled, Settled` -> MET: MET.4（协商接受率）。
 - E13 Disputing->Forfeited（timeoutForfeit） -> API: `timeoutForfeit` -> INV: INV.8 -> EVT: `Forfeited` -> GOV: GOV.1/GOV.3（争议时长）。
