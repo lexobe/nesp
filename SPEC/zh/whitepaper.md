@@ -74,7 +74,7 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 - 建议：支持“WETH 适配层”作为工程选项，但规范层必须支持原生 ETH。
 
 ### 2.6 参数协商与范围（规范）
-- 协商主体与生效时点：`E`、`D_due`、`D_rev`、`D_dis` 由 Client 与 Contractor 针对“每一笔订单”达成一致；实现必须在订单建立/接受时固化存储。订单同时固化 `provider` 与 `feeBps`（服务商与费率），且自固化后 MUST NOT 修改。
+- 协商主体与生效时点：`E`、`D_due`、`D_rev`、`D_dis` 由 Client 与 Contractor 针对“每一笔订单”达成一致；实现必须在订单建立/接受时固化存储。订单同时固化 `provider` 与 `feeBps`（服务商与费率），且自固化后 MUST NOT 修改。允许 `provider = address(0)` 表示不配置服务商；此时 `feeBps MUST = 0`。
 - 默认值：若 `dueSec/revSec/disSec` 传入 0，则采用协议默认 `D_due=1d=86_400s`、`D_rev=1d=86_400s`、`D_dis=7d=604_800s`；入库与事件需记录替换后的“生效值”。
 - 修改规则：`E` 仅可单调增加；`D_due/D_rev` 仅允许在争议发生前单调延后；`D_dis` 自设置后固定，不提供延长入口。
 - 有界性：三者必须为有限值且大于 0；为抵御重组，`D_dis ≥ 2·T_reorg`（由部署方按目标链给出估计）。
@@ -208,7 +208,8 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 - INV.1 全额结清：`amountToSeller = escrow`（approve/timeout）。
 - INV.2 金额型结清：`amountToSeller = A` 且 `0 ≤ A ≤ escrow`（签名协商）。
 - INV.3 退款：`refundToBuyer = escrow − amountToSeller`（若 A < escrow）。
- - INV.14 平台费（服务商）：当订单处于 Settled 终态时，若已固化 `provider, feeBps`，则按 `fee = floor(amountToSeller * feeBps / 10_000)` 计入服务商可提余额；必须满足 `0 ≤ fee ≤ amountToSeller`，且守恒成立：`(amountToSeller − fee) + (escrow − amountToSeller) + fee = escrow`。Cancelled/Forfeited 不产生平台费。
+- INV.14 平台费（服务商）：当订单处于 Settled 终态时，若已固化 `provider, feeBps`，则按 `fee = floor(amountToSeller * feeBps / 10_000)` 计入服务商可提余额；必须满足 `0 ≤ fee ≤ amountToSeller`，且守恒成立：`(amountToSeller − fee) + (escrow − amountToSeller) + fee = escrow`。Cancelled/Forfeited 不产生平台费。
+  - 注：当 `provider = address(0)` 或 `feeBps = 0` 时，`fee = 0`，不产生 `kind=Fee` 的记账与事件（仍满足守恒式）。
 
 ### 4.2 资金安全
 - INV.4 单次入账：每单至多一次将结清额/退款额入账至聚合余额（single_credit），防止重复计入可提余额。
@@ -313,9 +314,9 @@ function _safeTransferIn(token, subject, amount) internal {
 （统一说明）错误命名在本章为“示例化”（如 `ErrXxx`），部署可采用等价错误名，但须保持语义、守卫与回滚路径一致。
 
 -### 6.1 函数（最小集）
-- `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, provider, feeBps) -> orderId`：创建订单，固化资产与时间锚点、服务商与费率；`provider` MUST 在白名单内；`feeBps` MUST 等于 `providerFeeBps[provider]` 且满足 `0 ≤ feeBps ≤ 10_000`，若配置了全局上限 `bpsMax`，还需 `feeBps ≤ bpsMax`；固化后不得修改。
+- `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, provider, feeBps) -> orderId`：创建订单，固化资产与时间锚点、服务商与费率；允许 `provider = address(0)` 表示不计费，此时 `feeBps MUST = 0`；当 `provider ≠ 0` 时，`provider` MUST 在白名单内，且 `feeBps MUST == providerFeeBps[provider]` 并满足 `0 ≤ feeBps ≤ 10_000`（若配置了全局上限 `bpsMax`：还需 `feeBps ≤ bpsMax`）；固化后不得修改。
 - `createOrder(...)` 触发事件：`OrderCreated`。
-- `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, provider, feeBps, amount)`（payable） ：创建并立即充值指定金额（ETH：`msg.value == amount`；ERC‑20：`SafeERC20.safeTransferFrom(subject, this, amount)`）；`provider/feeBps` 守卫与 `createOrder` 一致。
+- `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, provider, feeBps, amount)`（payable） ：创建并立即充值指定金额（ETH：`msg.value == amount`；ERC‑20：`SafeERC20.safeTransferFrom(subject, this, amount)`）；`provider/feeBps` 守卫与 `createOrder` 一致；允许 `provider = address(0)` 且 `feeBps = 0`。
 - `createAndDeposit(...)` 触发事件：`OrderCreated`、`EscrowDeposited`（同一交易）。
 - `depositEscrow(orderId, amount)`（payable）：补充托管额，允许 client 或第三方赠与；入口遵守资产与冻结守卫。触发事件：`EscrowDeposited`。
 - `acceptOrder(orderId)`：承接订单，需 `subject == contractor`，并设置 `startTime`。触发事件：`Accepted`。
@@ -339,7 +340,7 @@ function _safeTransferIn(token, subject, amount) internal {
 - `extendReview(orderId, newRevSec)`：contractor 单调延长评审窗口。触发事件：`ReviewExtended`（记录 old/new）。
 
 ### 6.2 事件（最小字段）
-- `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, provider, feeBps)`：订单建立时触发，固化角色、时间参数与服务商/费率。事件的 `block.timestamp` 视为 `startTime` 候选锚点。
+- `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, provider, feeBps)`：订单建立时触发，固化角色、时间参数与服务商/费率（`provider` 可为 `address(0)`，对应 `feeBps=0`）。事件的 `block.timestamp` 视为 `startTime` 候选锚点。
 - `EscrowDeposited(orderId, from, amount, newEscrow, via)`：托管额充值成功后触发，记录充值来源与调用通道；未启用受信路径时 `via = address(0)`。
 - `Accepted(orderId, escrow)`：承接订单（进入 Executing）时触发，确认当前托管额；`block.timestamp` 可作为 `startTime` 实际值校验。
 - `ReadyMarked(orderId, readyAt)`：卖方标记交付就绪时触发（进入 Reviewing），固化 `readyAt` 锚点。

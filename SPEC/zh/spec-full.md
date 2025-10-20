@@ -204,6 +204,7 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
     - 全量资金恒等式（审计）：分 `tokenAddr` 核对“合约资产余额 = Σ 未终态订单 escrow + Σ 用户聚合可提余额 + forfeitBalance”。
   - INV.9 比例路径兼容（可选）：`amountToSeller = floor(escrow * num / den)`；余数全部计入买方退款。实现 MUST 使用安全的“mulDiv 向下取整”或等效无溢出实现；任何溢出/下溢 MUST revert；禁止四舍五入与精度提升。
 - INV.10 Pull 语义：状态变更仅“记账可领额”（聚合到 `balance[token][addr]`），实际转账仅在 `withdraw(token)` 发生；治理提款为系统级外流，不属于用户 `withdraw(token)`，但须满足 INV.8 与安全约束；禁止在状态变更入口直接 `transfer`。
+  - INV.14 平台费（Provider Fee）：当订单处于 Settled 终态时，若已固化 `provider, feeBps`，则按 `fee = floor(amountToSeller * feeBps / 10_000)` 计入服务商可提余额；必须满足 `0 ≤ fee ≤ amountToSeller`，且守恒成立：`(amountToSeller − fee) + (escrow − amountToSeller) + fee = escrow`。当 `provider = address(0)` 或 `feeBps = 0` 时 `fee = 0`（不产生 Fee 记账与事件）；Cancelled/Forfeited 不产生平台费。
   - INV.11 锚点一次性：`startTime/readyAt/disputeStart` 一旦设置，MUST NOT 修改或回拨（仅允许“未设置 → 设置一次”）。
   - INV.12 计时器规则：`D_due/D_rev` 仅允许延后（单调增加，且在进入 Disputing 前）；`D_dis` 固定且不可延长。
   - INV.13 唯一机制：无争议路径必须全额结清；争议路径采用签名金额结清；金额口径始终满足 `A ≤ E`，链上仅记录托管与结清。
