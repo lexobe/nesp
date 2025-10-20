@@ -506,7 +506,10 @@ function _safeTransferIn(token, subject, amount) internal {
    - 结清：统一内部函数按 `fee = floor(A*bps/10_000)` 记账三笔 `Payout/Refund/Fee`（金额为 0 的 `Fee` 事件可省略），订单 `escrow` 清零；Cancelled/Forfeited 不计费。
 
 ### 12.2 测试与验证（代表性）
-- 代表性用例：无争议全额/签名金额/超时没收；覆盖 A≤E、计时器边界、Pull/CEI、授权与签名重放。
+- 代表性用例：
+  - 无争议全额/签名金额/超时没收；覆盖 A≤E、计时器边界、Pull/CEI、授权与签名重放。
+  - 平台费（Provider Fee）结清三笔记账：`Payout=A−fee`、`Refund=E−A`、`Fee=floor(A*bps/10_000)`，且 `escrow=0`、每种 kind≤1。
+  - 费率边界：`fee=0`（bps=0）与 `fee` 上限（`bps=bpsMax` 或 10_000）均应通过；签名结清（settleWithSigs）同样计费。
 ## 13. 分阶段开放与治理（Phased Opening & Governance）
 
 - 渗透度三档（低/中/高）：观测重点、门槛字段（W/θ/β/τ）、开放动作。
@@ -534,7 +537,7 @@ function _safeTransferIn(token, subject, amount) internal {
  - `Provider` 服务商（第三方服务平台，白名单内）；`feeBps` 费率（bps，1/10_000）；`fee = floor(A*feeBps/10_000)`；`payoutToSeller = A − fee`。
 
 ### 16.2 指标与事件口径表（简）
-- 事件：`OrderCreated/EscrowDeposited/Accepted/DisputeRaised/Settled/AmountSettled/Forfeited/Cancelled/Balance{Credited,Withdrawn}`。
+- 事件：`OrderCreated/EscrowDeposited/Accepted/DisputeRaised/Settled/AmountSettled/Forfeited/Cancelled/Balance{Credited(kind=Fee 含在内),Withdrawn}/ProtocolFeeWithdrawn`。
 
 ### 16.3 博弈附录：立即妥协的唯一 SPE（信息性）
 模型与前提（可检验）
