@@ -12,7 +12,7 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 核心流程
 - Step 1 托管：买方把应付款先存入托管账户（E）。
 - Step 2 交付：卖方接单并完成交付/发货。
-- Step 3 验收放款（无争议）：买方验收通过，托管款一次性全额打给卖方（E）。
+- Step 3 验收放款（无争议）：买方验收通过，托管款一次性全额打给卖方（E）（按终态资金口径，若配置 Provider 费率，卖方实际可提为 `E − fee`，`fee = floor(E * bps / 10_000)`，买方退款不变）。
 - Step 4 发起争议（如有）：在限定时间内提出分歧。
 - Step 5 限时协商：双方在争议期内商定付款数额 A（A≤E）→ 按 A 付款，剩余返还买方。
 - Step 6 超时威慑：若超时仍未达成一致，则对称没收这笔托管款（双方都拿不到，划入 ForfeitPool；罚没资产默认沉淀于协议，可由治理模块提取用于协议费用；其他用途须经社区决议授权）。
@@ -142,7 +142,7 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - G.E4/G.E8 `approveReceipt`：
     - Condition：`state ∈ {Executing, Reviewing}`。
     - Subject：`client`。
-    - Effects：结清金额 `amountToSeller = escrow`，状态转入 Settled。
+    - Effects：结清金额 `amountToSeller = escrow`，状态转入 Settled；与 3.3 终态资金口径一致：记账三笔（`Payout=amountToSeller−fee`、`Refund=escrow−amountToSeller`、`Fee=floor(amountToSeller*bps/10_000)`），订单 `escrow` 清零。
     - Failure：条件未满足 MUST `revert`。
   - G.E5 `raiseDispute`（执行阶段）：
     - Condition：`state = Executing` 且 `now < startTime + D_due`。
@@ -167,7 +167,7 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - G.E9 `timeoutSettle`：
     - Condition：`state = Reviewing` 且 `now ≥ readyAt + D_rev`。
     - Subject：任意地址。
-    - Effects：结清金额 `amountToSeller = escrow`，状态转入 Settled。
+    - Effects：结清金额 `amountToSeller = escrow`，状态转入 Settled；与 3.3 终态资金口径一致：记账三笔并清零 `escrow`。
     - Failure：条件未满足 MUST `revert`。
   - G.E11 `cancelOrder`（contractor，评审阶段）：
     - Condition：`state = Reviewing`。
@@ -177,7 +177,7 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - G.E12 `settleWithSigs`：
     - Condition：`state = Disputing`，`now < disputeStart + D_dis`，`amountToSeller ≤ escrow`，并通过 EIP‑712/1271 签名、`nonce`、`deadline` 校验。
     - Subject：`client` 或 `contractor`。
-    - Effects：按签名金额结清（`amountToSeller = A`），状态转入 Settled。
+    - Effects：按签名金额结清（`amountToSeller = A`），状态转入 Settled；与 3.3 终态资金口径一致：记账三笔并清零 `escrow`。
     - Failure：条件未满足 MUST `revert`（`ErrBadSig/ErrReplay/ErrExpired/ErrOverEscrow` 等）。
 - G.E13 `timeoutForfeit`：
     - Condition：`state = Disputing` 且 `now ≥ disputeStart + D_dis`。
@@ -243,6 +243,8 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - `withdrawForfeit(tokenAddr, to, amount)`：治理模块调用，从 ForfeitPool 中提取指定资产；成功时触发 `ProtocolFeeWithdrawn`。
   - `extendDue(orderId, newDueSec)`；`extendReview(orderId, newRevSec)`（单调延后）
   - `commitEvidence(orderId, evc)`：订单参与者提交证据承诺；可多次调用；触发 `EvidenceCommitted`
+  - `getOrder(orderId) view`：返回 `{client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart, provider, feeBps}`。
+  - `withdrawableOf(tokenAddr, account) view`：读取聚合可提余额（涵盖 `Payout/Refund/Fee`）。
 - 事件（建议的最小充分字段；单一清单）：
   - `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, provider, feeBps)`
   - `EscrowDeposited(orderId, from, amount, newEscrow, via)`；`Accepted(orderId, escrow)`；`ReadyMarked(orderId, readyAt)`；`DisputeRaised(orderId, by)`
