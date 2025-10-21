@@ -313,6 +313,8 @@ function _safeTransferIn(token, subject, amount) internal {
 ## 6. API 与事件（最小充分集）
 （统一说明）错误命名在本章为“示例化”（如 `ErrXxx`），部署可采用等价错误名，但须保持语义、守卫与回滚路径一致。
 
+（信息性）如需“证据承诺/证据合约”，可在应用层增加扩展接口与合约实现，内核不强制，也不纳入本规范评审。
+
 ### 6.1 函数（最小集）
  - `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtx)`：创建订单，固化资产/时间锚点与手续费策略（`feeHook` 可为 `address(0)` 表示不计费；`feeCtx` 建议仅在事件中记录哈希）。
  - `createOrder(...)` 触发事件：`OrderCreated`。
@@ -373,22 +375,6 @@ function _safeTransferIn(token, subject, amount) internal {
 （治理接口调用来源说明，补充，不改变语义）
 - 治理接口（如 `withdrawForfeit`）不适用本节“受信路径”规则；必须由治理主体地址直接调用（判定口径：`msg.sender == governance`；若治理主体为合约，任何以该合约地址为 `msg.sender` 的内部模块/代理/委托调用均视为直接调用）；检测到经由未授权的转发/多跳调用时 MUST `revert`（`ErrUnauthorized`）。
 
-### 6.4 证据承诺（Evidence Commitments）
-- 目标：在不改变结算主流程的前提下，为关键阶段提供可验证的离链证据指纹，支持审计与 SLO 观测。
-- 数据结构：`EvidenceCommitment = {hash (bytes32), uri (≤256 字节), alg (string, ≤32 字节, ASCII)}`；`alg` 建议填入内容寻址或强哈希算法名称（如 `ipfs-cid`、`sha256`、`keccak256`）；合约不对 `alg` 作语义校验，仅作为外部消费的提示性字段。
-- 接口：`commitEvidence(orderId, evc)`；
-  - 守卫规范（与 §3.3 体例一致）：
-    - Condition：`orderId` 存在；`evc.uri.length ≤ 256`；`evc.alg.length ≤ 32`；
-    - Subject：解析后的 `subject ∈ {client, contractor}`（按 §3.3“调用主体解析”：直连/2771/4337）。
-    - Effects：读取订单当前状态值填入事件 `status`；触发 `EvidenceCommitted(orderId, status, actor=subject, evc)`；不改变任何订单/余额字段。
-    - Failure：条件未满足 MUST `revert`（如 `ErrNotParticipant/ErrUriTooLong/ErrAlgTooLong` 等；错误命名为示例）。
-- 建议：
-  1. 优先使用内容寻址 URI（`ipfs://CIDv1` / `ar://TXID`）；若使用 `https://` 等位置式 URL，必须同时提交强哈希。
-  2. Manifest 建议遵循 `nesp-evc-1.0`（JCS 规范化后取哈希），可扩展 `merkleRoot` 与 `encryption` 字段以支持大包或隐私场景（信息性/可选；不计入规范评审与合规性）。
-  3. 单次调用仅提交 1 条承诺；如需补充，可多次调用，外部可依据 `block.timestamp` / `block.number` / `hash` 判定最新记录。应校验 `uri` 长度与字符集，防止滥用。
-  4. 一线应用或离线服务可在 `acceptOrder/markReady/settleWithSigs/timeout*` 等关键动作后提醒参与者调用本接口，主合约不得替代参与者提交。
-  5. SDK/CLI 可提供“生成 Manifest → 规范化 → 计算哈希 → 上传 → 调用 `commitEvidence`”的一键流程，降低人工差错。
-  6. 运维应监控 `EvidenceCommitted` 事件，缺失或延迟时在 Runbook 中执行补交或告警流程。
 
 ## 7. 可观测性与 SLO（公共审计）
 
