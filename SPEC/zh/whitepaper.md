@@ -334,13 +334,13 @@ function _safeTransferIn(token, subject, amount) internal {
    - Effects：`forfeitBalance[tokenAddr] -= amount`；将资产转给 `to`；ETH 使用 `call{value:amount}`，ERC‑20 使用 `SafeERC20.safeTransfer`。
    - Failure：MUST `revert`（`ErrUnauthorized/ErrAmountZero/ErrInsufficientForfeit` 等）。上述错误命名为示例，实施可采用等价错误名，但语义与守卫必须一致。
 - `commitEvidence(orderId, EvidenceCommitment)`：提交指定阶段的证据指纹；仅限订单参与者调用，可多次提交补充材料。触发事件：`EvidenceCommitted`。
-- `getOrder(orderId) view`：只读查询并返回 `{client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart, provider, feeBps}`。
+- `getOrder(orderId) view`：只读查询并返回 `{client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart, feeHook, feeCtxHash}`（`feeCtxHash` 为手续费策略上下文的哈希；原始 `feeCtx` 由链下保存，用于审计重放）。
 - `withdrawableOf(tokenAddr, account) view`：读取聚合可提余额（涵盖 Payout/Refund/Fee），便于钱包等组件展示与核对。
 - `extendDue(orderId, newDueSec)`：client 单调延长履约窗口。触发事件：`DueExtended`（记录 old/new）。
 - `extendReview(orderId, newRevSec)`：contractor 单调延长评审窗口。触发事件：`ReviewExtended`（记录 old/new）。
 
 ### 6.2 事件（最小字段）
-- `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, provider, feeBps)`：订单建立时触发，固化角色、时间参数与服务商/费率（`provider` 可为 `address(0)`，对应 `feeBps=0`）。事件的 `block.timestamp` 视为 `startTime` 候选锚点。
+- `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, feeHook, feeCtxHash)`：订单建立时触发，固化角色、时间参数与手续费策略（`feeHook` 可为 `address(0)`；`feeCtxHash` 仅存哈希）。事件的 `block.timestamp` 视为 `startTime` 候选锚点。
 - `EscrowDeposited(orderId, from, amount, newEscrow, via)`：托管额充值成功后触发，记录充值来源与调用通道；未启用受信路径时 `via = address(0)`。
 - `Accepted(orderId, escrow)`：承接订单（进入 Executing）时触发，确认当前托管额；`block.timestamp` 可作为 `startTime` 实际值校验。
 - `ReadyMarked(orderId, readyAt)`：卖方标记交付就绪时触发（进入 Reviewing），固化 `readyAt` 锚点。
