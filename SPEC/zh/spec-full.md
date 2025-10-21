@@ -233,9 +233,9 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 
 ## 7) API 与事件契约（映射状态机/不变量）
 - 函数（最小集）：
-  - `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtxHash) -> orderId`
+  - `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtx) -> orderId`
     - 零值采用默认（MUST）：若 `dueSec/revSec/disSec` 传入 0，表示采用协议默认值（`1d/1d/7d`）；事件 `OrderCreated` 中的 `dueSec/revSec/disSec` 必须记录替换后的“生效值”（非 0）。
-  - `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtxHash, amount)`（payable）→ 创建并充值（ETH: `msg.value==amount`；ERC‑20: `SafeERC20.safeTransferFrom` amount）
+  - `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtx, amount)`（payable）→ 创建并充值（ETH: `msg.value==amount`；ERC‑20: `SafeERC20.safeTransferFrom` amount）
   - `depositEscrow(orderId, amount)`（payable；同上资产规则）
   - `acceptOrder(orderId)`；`markReady(orderId)`；`approveReceipt(orderId)`；`timeoutSettle(orderId)`
   - `raiseDispute(orderId)`；`settleWithSigs(orderId, payload, sig1, sig2)`；`timeoutForfeit(orderId)`
