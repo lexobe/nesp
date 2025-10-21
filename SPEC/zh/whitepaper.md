@@ -340,7 +340,7 @@ function _safeTransferIn(token, subject, amount) internal {
 - `extendReview(orderId, newRevSec)`：contractor 单调延长评审窗口。触发事件：`ReviewExtended`（记录 old/new）。
 
 ### 6.2 事件（最小字段）
-- `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, feeHook, feeCtxHash)`：订单建立时触发，固化角色、时间参数与手续费策略（`feeHook` 可为 `address(0)`；`feeCtxHash` 仅存哈希）。事件的 `block.timestamp` 视为 `startTime` 候选锚点。
+ - `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, feeHook, feeCtxHash)`：订单建立时触发，固化角色、时间参数与手续费策略（`feeHook` 可为 `address(0)`；`feeCtxHash` 为手续费策略上下文的哈希，原始 `feeCtx` 由链下保存用于审计重放）。事件的 `block.timestamp` 视为 `startTime` 候选锚点。
 - `EscrowDeposited(orderId, from, amount, newEscrow, via)`：托管额充值成功后触发，记录充值来源与调用通道；未启用受信路径时 `via = address(0)`。
 - `Accepted(orderId, escrow)`：承接订单（进入 Executing）时触发，确认当前托管额；`block.timestamp` 可作为 `startTime` 实际值校验。
 - `ReadyMarked(orderId, readyAt)`：卖方标记交付就绪时触发（进入 Reviewing），固化 `readyAt` 锚点。
