@@ -335,7 +335,6 @@ function _safeTransferIn(token, subject, amount) internal {
    - Subject：治理模块地址。
    - Effects：`forfeitBalance[tokenAddr] -= amount`；将资产转给 `to`；ETH 使用 `call{value:amount}`，ERC‑20 使用 `SafeERC20.safeTransfer`。
    - Failure：MUST `revert`（`ErrUnauthorized/ErrAmountZero/ErrInsufficientForfeit` 等）。上述错误命名为示例，实施可采用等价错误名，但语义与守卫必须一致。
-- `commitEvidence(orderId, EvidenceCommitment)`：提交指定阶段的证据指纹；仅限订单参与者调用，可多次提交补充材料。触发事件：`EvidenceCommitted`。
 - `getOrder(orderId) view`：只读查询并返回 `{client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart, feeHook, feeCtxHash}`（`feeCtxHash` 为手续费策略上下文的哈希；原始 `feeCtx` 由链下保存，用于审计重放）。
 - `withdrawableOf(tokenAddr, account) view`：读取聚合可提余额（涵盖 Payout/Refund/Fee），便于钱包等组件展示与核对。
 - `extendDue(orderId, newDueSec)`：client 单调延长履约窗口。触发事件：`DueExtended`（记录 old/new）。
@@ -357,7 +356,6 @@ function _safeTransferIn(token, subject, amount) internal {
  - `BalanceCredited(orderId, to, tokenAddr, amount, kind)`（`kind ∈ {Payout, Refund, Fee}`）：结清/退款/手续费记账到可提余额时触发（`kind=Fee` 的金额为 0 时可不发事件）。
 - `BalanceWithdrawn(to, tokenAddr, amount)`：用户提现成功时触发。
  - `ProtocolFeeWithdrawn(tokenAddr, to, amount, actor)`：治理提款成功时触发；`actor` 为治理调用者。
-- `EvidenceCommitted(orderId, status, address actor, EvidenceCommitment evc)`：提交证据时触发；`status` 直接使用订单当前状态值（Initialized/Executing/Reviewing/Disputing/Settled/Forfeited），`actor` 等于解析后 `subject`。字段边界见 §6.4 数据结构。
 - 说明：事件不携带显式 `ts` 字段，默认以日志对应区块的 `block.timestamp` 作为时间锚点。
 
 ### 6.3 授权与来源（可选受信路径）
@@ -387,7 +385,6 @@ function _safeTransferIn(token, subject, amount) internal {
 - GOV.1 终态分布（成功/没收/取消）。
 - GOV.2 `A/E` 基线分布（以进入 Reviewing/Disputing 时的 E 为基线）。
 - GOV.3 争议时长分布：`DisputeRaised` 与 `Settled/Forfeited` 事件区块时间之间的持续时间（仅对进入 Disputing 的订单），按窗口统计 P50/P95/直方。
-- 证据承诺观测：建议将 `EvidenceCommitted` 事件的提交率/延迟纳入 MET.5 衍生指标，并在缺失时触发运维告警。去重口径：提交率按 `orderId` 计首条提交；延迟按每单首条 `EvidenceCommitted` 与对应阶段事件（如 `Accepted/ReadyMarked/DisputeRaised/Settled/Forfeited` 等）之间的时间计算；后续补充提交不重复计数。
 
 （ForfeitPool 可观测性，信息性）
 - MET.FP1 ForfeitPool 流入量（系统级，非订单维度去重）：窗口内按 `tokenAddr` 聚合 `Σ(Forfeited.amount)`。
@@ -575,7 +572,7 @@ function _safeTransferIn(token, subject, amount) internal {
 * **协作自促进（对称没收威慑）** → §2.7 "不可达一致"触发器（限时到期）、§4.3 INV.8（罚没资产留存合约）、§9.1 性质 R1–R4、§16.3 唯一 SPE（立即妥协）
 * **可信中立** → §1.2 确定性时间窗/对称规则/开放事件、§2.2 时间与计时器、§5.1 签名与重放、§7.1 指标（公共审计）
 * **可验证与可重放** → §1.3 最小证据集、§2.3 金额口径（A≤E）、§4.2 不变量 INV.1–13、§6.2 事件（最小字段）
-* **A2A 生命周期对接** → §1.4 调用路径、§6.3 授权与来源、§6.4 证据承诺
+* **A2A 生命周期对接** → §1.4 调用路径、§6.3 授权与来源
 * **分阶段开放与门槛治理** → §1.5 统一参数表 {W,θ,β,τ}、§10.2 有效性判据、§13 渗透度三档、§15 CHG 绑定（Effective-Params/Baseline-Data/SLO-Runbook）
 
 ## 版权与许可
