@@ -390,16 +390,65 @@ function _safeTransferIn(token, subject, amount) internal {
   5. SDK/CLI 可提供“生成 Manifest → 规范化 → 计算哈希 → 上传 → 调用 `commitEvidence`”的一键流程，降低人工差错。
   6. 运维应监控 `EvidenceCommitted` 事件，缺失或延迟时在 Runbook 中执行补交或告警流程。
 
-## 7. 可观测性与 SLO（可选扩展，NESP‑OPS）
-可观测性/指标/SLO 为运维扩展，不属于内核规范；详见 NESP‑OPS（计数/去重与 ForfeitPool 观测口径同样迁移）。
+## 7. 可观测性与 SLO（公共审计）
+
+### 7.1 指标（定义/单位/窗口）
+- MET.1 结清延迟 P95、超时触发率。
+- MET.2 提现失败率、重试率。
+- MET.3 资金滞留余额。
+- MET.4 协商接受率 = `#AmountSettled / #DisputeRaised`（每单仅计首个 `AmountSettled`）。
+- MET.5 状态转换延迟/吞吐（E1/E3/E5/E10 等非终态转换的时延与速率）。
+- GOV.1 终态分布（成功/没收/取消）。
+- GOV.2 `A/E` 基线分布（以进入 Reviewing/Disputing 时的 E 为基线）。
+- GOV.3 争议时长分布：`DisputeRaised` 与 `Settled/Forfeited` 事件区块时间之间的持续时间（仅对进入 Disputing 的订单），按窗口统计 P50/P95/直方。
+- 证据承诺观测：建议将 `EvidenceCommitted` 事件的提交率/延迟纳入 MET.5 衍生指标，并在缺失时触发运维告警。去重口径：提交率按 `orderId` 计首条提交；延迟按每单首条 `EvidenceCommitted` 与对应阶段事件（如 `Accepted/ReadyMarked/DisputeRaised/Settled/Forfeited` 等）之间的时间计算；后续补充提交不重复计数。
+
+（ForfeitPool 可观测性，信息性）
+- MET.FP1 ForfeitPool 流入量（系统级，非订单维度去重）：窗口内按 `tokenAddr` 聚合 `Σ(Forfeited.amount)`。
+- MET.FP2 ForfeitPool 流出量（系统级，非订单维度去重）：窗口内按 `tokenAddr` 聚合 `Σ(ProtocolFeeWithdrawn.amount)`。
+- MET.FP3 ForfeitPool 未提余额（outstanding，系统级，非订单维度去重）：`FP3 = FP1 累计 − FP2 累计`，需与链上 `forfeitBalance[tokenAddr]` 对照一致。
+
+#### 计数与去重规则（口径约束）
+- 每单仅一次：`OrderCreated/Accepted/ReadyMarked/DisputeRaised/Settled/AmountSettled/Forfeited/Cancelled`。
+- `BalanceCredited`：按 `kind ∈ {Payout, Refund, Fee}` 去重——每单每种 kind 至多 1 次（因此每单最多 3 次：一次给卖方 Payout，一次给买方 Refund，一次手续费 Fee；`kind=Fee` 金额为 0 时可不发事件）。
+- 可重复事件（订单维度）：
+  - `EscrowDeposited`（允许多次充值或第三方赠与）
+  - `BalanceWithdrawn`（余额领取可多次提取）
+  - `DueExtended`、`ReviewExtended`（窗口仅允许单调延长，重复记录前后值轨迹）
+ - 系统级事件（非订单维度）：
+   - `ProtocolFeeWithdrawn`（治理提款），不计入订单维度的计数与去重。
+
+#### GOV.1 终态分布
+- 定义：统计观察窗口内 `Settled/Forfeited/Cancelled` 三类终态的占比。
+- 单位/窗口：归一化比例；按 7/30 天滚动窗口或运营指定窗口输出。
+- 说明：每笔订单仅记录其首个终态；重复取消/再结清视为异常，应在治理流程中单独标注。
+
+#### GOV.2 `A/E` 基线分布
+- 定义：对进入 Reviewing 或 Disputing 时刻的托管额 `E`，记录最终结清额 `A` 与 `E` 之比（`A/E`）。
+- 单位/窗口：比例；按 P50/P95/直方等方式统计。
+- 说明：当订单被没收时记 `A = 0`；取消订单不计入该指标。
+
+#### GOV.3 争议时长
+- 定义：从 `DisputeRaised` 事件区块时间到终态 `Settled/Forfeited` 事件区块时间的持续时间。
+- 单位/窗口：秒；按窗口聚合（P50/P95/直方）。
+- 说明：Forfeited 与 Settled 均纳入；取消不计。
+
+### 7.2 SLO 与回滚剧本
+- 判据：`SLO_T(W) := (forfeit_rate ≤ θ) ∧ (acceptance_rate ≥ β) ∧ (p95_settle ≤ τ)`；`θ/β/τ` 与窗口 `W` 由部署侧在 CHG 定义。
+- 动作：超阈触发“切换白名单/停写/回滚”剧本；退出条件模板：若【唯一判据】在窗口 `W` 内持续满足，则执行【停止/退出/回滚】（默认 UTC）。
 
 #### 分析方法（信息性，不进入守卫）
 - 单调性检验、分位/秩回归、断点/DiD、离群点告警；用于分析与告警，不改变合约语义。
 
-## 8. 版本化与变更管理（外部文档）
+## 8. 版本化与变更管理
 
-（外部）语义版本/变更卡/兼容别名相关流程不属于内核规范；详见 versions.md/CHG。
-## 9. 结果与性质（移至 research/）
+### 8.1 语义版本
+- 状态机/不变量/API/指标任一变更 → 次版本以上；破坏性变更 → 主版本。
+### 8.2 变更卡（CHG）
+- 记录影响面（状态机→接口/事件→不变量→指标链路）、迁移/回滚步骤、兼容窗口。
+### 8.3 兼容别名（信息性）
+- （预留）为降低集成断裂，可在小版本周期内提供入口别名，明确弃用周期与移除时点。
+## 9. 结果与性质（博弈观点，信息性）
 
 ### 9.1 定义（R1–R4）
 - R1 付款不劣：`E − A ≥ 0`；无争议 A=E；协商 A≤E。
@@ -417,7 +466,7 @@ function _safeTransferIn(token, subject, amount) internal {
 反例映射（信息性）：
 - Ex‑1 → R1；Ex‑2 → R3；Ex‑3 → R4。
 
-## 10. 有效性判据与参数（移至 ops/ 或 gov/）
+## 10. 有效性判据与参数（Effectiveness）
 
 ### 10.1 判定谓词
 - `Effectiveness(W) := (R1 ∧ R2 ∧ R3 ∧ R4) ∧ SLO_T(W) ∧ Δ_BASELINE(W) ≥ 0`。
@@ -431,7 +480,7 @@ function _safeTransferIn(token, subject, amount) internal {
 
 ### 10.3 判定流程
 - 先验收 `SLO_T(W)`，再计算 `Δ_BASELINE(W)`，最后核对 R1–R4 的观测证据。
-## 11. 基线对照与适用性（移至 ops/ 或 gov/）
+## 11. 基线对照与适用性（Baselines & Applicability）
 
 ### 11.1 对照口径（相同窗口/来源/字段）
 - `succ = #Settled / (#Settled + #Forfeited + #Cancelled)`
