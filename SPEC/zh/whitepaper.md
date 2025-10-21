@@ -313,11 +313,11 @@ function _safeTransferIn(token, subject, amount) internal {
 ## 6. API 与事件（最小充分集）
 （统一说明）错误命名在本章为“示例化”（如 `ErrXxx`），部署可采用等价错误名，但须保持语义、守卫与回滚路径一致。
 
--### 6.1 函数（最小集）
-- `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, provider, feeBps) -> orderId`：创建订单，固化资产与时间锚点、服务商与费率；允许 `provider = address(0)` 表示不计费，此时 `feeBps MUST = 0`；当 `provider ≠ 0` 时，`provider` MUST 在白名单内，且 `feeBps MUST == providerFeeBps[provider]` 并满足 `0 ≤ feeBps ≤ 10_000`（若配置了全局上限 `bpsMax`：还需 `feeBps ≤ bpsMax`）；固化后不得修改。
-- `createOrder(...)` 触发事件：`OrderCreated`。
-- `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, provider, feeBps, amount)`（payable） ：创建并立即充值指定金额（ETH：`msg.value == amount`；ERC‑20：`SafeERC20.safeTransferFrom(subject, this, amount)`）；`provider/feeBps` 守卫与 `createOrder` 一致；允许 `provider = address(0)` 且 `feeBps = 0`。
-- `createAndDeposit(...)` 触发事件：`OrderCreated`、`EscrowDeposited`（同一交易）。
+### 6.1 函数（最小集）
+ - `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtx)`：创建订单，固化资产/时间锚点与手续费策略（`feeHook` 可为 `address(0)` 表示不计费；`feeCtx` 建议仅在事件中记录哈希）。
+ - `createOrder(...)` 触发事件：`OrderCreated`。
+ - `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtx, amount)`（payable） ：创建并立即充值指定金额（ETH：`msg.value == amount`；ERC‑20：`SafeERC20.safeTransferFrom(subject, this, amount)`）。
+ - `createAndDeposit(...)` 触发事件：`OrderCreated`、`EscrowDeposited`（同一交易）。
 - `depositEscrow(orderId, amount)`（payable）：补充托管额，允许 client 或第三方赠与；入口遵守资产与冻结守卫。触发事件：`EscrowDeposited`。
 - `acceptOrder(orderId)`：承接订单，需 `subject == contractor`，并设置 `startTime`。触发事件：`Accepted`。
 - `markReady(orderId)`：卖方声明交付就绪，仅 `subject == contractor`，设置 `readyAt` 并启动评审窗口。触发事件：`ReadyMarked`。
@@ -352,7 +352,7 @@ function _safeTransferIn(token, subject, amount) internal {
 - `AssetUnsupported(orderId, tokenAddr)`（可选）：适配层或预检流程判定资产不受支持且事务成功返回时触发；若主流程以 `ErrAssetUnsupported` 回滚则不发该事件。
 - `Forfeited(orderId, tokenAddr, amount)`：争议期超时被没收时触发；记录资产与没收金额（用于分资产对账与统计）。其中 `amount` 指没收时刻订单托管额（订单变更前的 E）。
 - `Cancelled(orderId, cancelledBy)`（`cancelledBy ∈ {Client, Contractor}`）：订单被取消时触发；与后续 `BalanceCredited（kind=Refund）` 记账。
-- `BalanceCredited(orderId, to, tokenAddr, amount, kind)`（`kind ∈ {Payout, Refund, Fee}`）：结清/退款/平台费记账到可提余额时触发（`kind=Fee` 的金额为 0 时可不发事件）。
+ - `BalanceCredited(orderId, to, tokenAddr, amount, kind)`（`kind ∈ {Payout, Refund, Fee}`）：结清/退款/手续费记账到可提余额时触发（`kind=Fee` 的金额为 0 时可不发事件）。
 - `BalanceWithdrawn(to, tokenAddr, amount)`：用户提现成功时触发。
  - `ProtocolFeeWithdrawn(tokenAddr, to, amount, actor)`：治理提款成功时触发；`actor` 为治理调用者。
 - `EvidenceCommitted(orderId, status, address actor, EvidenceCommitment evc)`：提交证据时触发；`status` 直接使用订单当前状态值（Initialized/Executing/Reviewing/Disputing/Settled/Forfeited），`actor` 等于解析后 `subject`。字段边界见 §6.4 数据结构。
@@ -410,7 +410,7 @@ function _safeTransferIn(token, subject, amount) internal {
 
 #### 计数与去重规则（口径约束）
 - 每单仅一次：`OrderCreated/Accepted/ReadyMarked/DisputeRaised/Settled/AmountSettled/Forfeited/Cancelled`。
-- `BalanceCredited`：按 `kind ∈ {Payout, Refund, Fee}` 去重——每单每种 kind 至多 1 次（因此每单最多 3 次：一次给卖方 Payout，一次给买方 Refund，一次给服务商 Fee；`kind=Fee` 金额为 0 时可不发事件）。
+- `BalanceCredited`：按 `kind ∈ {Payout, Refund, Fee}` 去重——每单每种 kind 至多 1 次（因此每单最多 3 次：一次给卖方 Payout，一次给买方 Refund，一次手续费 Fee；`kind=Fee` 金额为 0 时可不发事件）。
 - 可重复事件（订单维度）：
   - `EscrowDeposited`（允许多次充值或第三方赠与）
   - `BalanceWithdrawn`（余额领取可多次提取）
@@ -534,7 +534,7 @@ function _safeTransferIn(token, subject, amount) internal {
 - `E` 托管额；`A` 结清额；`V` 买方价值；`C` 卖方成本；
 - `D_due/D_rev/D_dis` 履约/评审/争议窗口；`startTime/readyAt/disputeStart` 锚点；
 - `ForfeitPool` 罚没逻辑账户（默认沉淀；仅治理提款；默认用于协议费用，其他用途须经社区决议）。
- - `Provider` 服务商（第三方服务平台，白名单内）；`feeBps` 费率（bps，1/10_000）；`fee = floor(A*feeBps/10_000)`；`payoutToSeller = A − fee`。
+- `FeeHook` 手续费策略（只读计算；可为 address(0) 表示不计费）；`feeCtxHash` 策略上下文哈希；`payoutToSeller = A − fee`。
 
 ### 16.2 指标与事件口径表（简）
 - 事件：`OrderCreated/EscrowDeposited/Accepted/DisputeRaised/Settled/AmountSettled/Forfeited/Cancelled/Balance{Credited(kind=Fee 含在内),Withdrawn}/ProtocolFeeWithdrawn`。
