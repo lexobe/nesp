@@ -243,7 +243,6 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - `withdraw(tokenAddr)`：提取累计收益或退款（Pull 语义，`nonReentrant`），成功时触发 `BalanceWithdrawn`。
   - `withdrawForfeit(tokenAddr, to, amount)`：治理模块调用，从 ForfeitPool 中提取指定资产；成功时触发 `ProtocolFeeWithdrawn`。
   - `extendDue(orderId, newDueSec)`；`extendReview(orderId, newRevSec)`（单调延后）
-  - `commitEvidence(orderId, evc)`：订单参与者提交证据承诺；可多次调用；触发 `EvidenceCommitted`
   - `getOrder(orderId) view`：返回 `{client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart, feeHook, feeCtxHash}`。
   - `withdrawableOf(tokenAddr, account) view`：读取聚合可提余额（涵盖 `Payout/Refund/Fee`）。
 - 事件（建议的最小充分字段；单一清单）：
@@ -258,26 +257,10 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - `BalanceCredited(orderId, to, tokenAddr, amount, kind)`（`kind ∈ {Payout, Refund, Fee}`）
   - `BalanceWithdrawn(to, tokenAddr, amount)`
   - `ProtocolFeeWithdrawn(tokenAddr, to, amount, actor)`
-  - `EvidenceCommitted(orderId, status, address actor, EvidenceCommitment evc)`
   - 说明：事件不再携带显式时间字段，统一以日志所在区块的 `block.timestamp` 作为时间锚点。
 
-#### 7.A 证据承诺（Evidence Commitments，规范性）
-#### 7.A 证据承诺（Evidence Commitments，规范性）
-- 目的：在不改变结算主流程的前提下，为关键阶段输出可验证的离链证据指纹，用于审计与 SLO 观测。
-- 数据结构（MUST）：`EvidenceCommitment = {hash:bytes32, uri:string≤256, alg:string}`。`alg` 建议填入内容寻址或强哈希算法名称（如 `ipfs-cid`、`sha256`、`keccak256`）；也可采用自描述 multihash。
-- 实现形态（MUST）：主合约直接暴露 `commitEvidence(orderId, evc)` 入口；若未来拆分模块，接口与事件格式需保持一致。
-- 接口约束（MUST）：
-  1. 调用主体限于订单参与者（`client` 或 `contractor`），`actor = 解析后的 subject`（直连/2771/4337）；合约直接读取订单当前状态并写入事件 `status`。
-  2. 单次调用仅接受 1 条 `EvidenceCommitment`；如需补充，可多次调用。实现需校验 `uri` 为 UTF‑8 且长度 ≤ 256 字节，`hash` 建议来源于 JCS 规范化后的离链清单或内容寻址指纹。
-  3. 若 `uri` 为位置式 URL（如 `https://`），调用者 MUST 同步提供强哈希；推荐使用 `ipfs://CIDv1`、`ar://TXID`、`ni://` 等内容寻址方案。
-  4. 部署可在应用层或离线服务中提示参与者在 `acceptOrder/markReady/settleWithSigs/timeout*` 等关键动作后自行调用本接口，但主合约不得代表参与者代为提交。
-- Manifest 与工具链（信息性）：
-  1. 推荐遵循 `nesp-evc-1.0` JSON 清单规范，先经 **JCS（RFC 8785）** 规范化后取哈希，作为 `evc.hash`。
-  2. 大包或隐私场景可在 Manifest 中扩展 `merkleRoot`、`encryption` 等字段，仅公开必要证明。
-  3. 官方 CLI/SDK 可提供“生成 Manifest → 规范化 → 计算哈希 → 上传（IPFS/Arweave）→ 调用 `commitEvidence`”的一键流程，减少人工差错。
-- 运维要求（MUST）：
-  - `EvidenceCommitted(orderId, status, actor, evc)` 事件是 SLO 观测来源；部署方必须监控缺失或延迟并在 Runbook 中定义补交流程。
-  - 可按业务设定阶段性提交时限（如 `markReady` 后 ≤ 1 小时）；若超时缺失，应触发告警。
+#### 7.A 证据承诺（可选扩展，NESP‑EVC）
+证据承诺不属于内核规范；接口/事件与实现建议见 NESP‑EVC 扩展文档。
 - 错误（示例）：ERR.1 `ErrInvalidState`；ERR.2 `ErrGuardFailed`；ERR.3 `ErrAlreadyPaid`；ERR.4 `ErrExpired`；ERR.5 `ErrBadSig`；ERR.6 `ErrOverEscrow`；ERR.7 `ErrFrozen`；ERR.8 `ErrAssetUnsupported`；ERR.9 `ErrReplay`；ERR.10 `ErrUnauthorized`。
 - 映射规则（MUST）：E.x ↔ API/EVT ↔ INV.x ↔ MET.x/GOV.x 一一可追溯。
  - （工程建议）资产支持与适配层细节见平台工程文档。
@@ -290,7 +273,7 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - MET.4 争议时长分布、协商接受率（公式：协商接受率 = `AmountSettled` 事件数 / `DisputeRaised` 事件数；建议观测窗口 7/30 天滚动；撤销/过期不计入分子；每单仅计首个 `AmountSettled`；跨窗口滚动按事件时间戳归属；分母按“同一订单在结清/没收前的首次 `DisputeRaised` 计 1 次”，重复触发/撤销不重复计数）。
   - MET.5 状态转换延迟/吞吐（E1/E3/E5/E10 等非终态转换的时延与速率）；
   - GOV.1 终态分布（成功/没收/取消）；
-- 证据承诺观测：建议将 `EvidenceCommitted` 事件的提交率与延迟纳入 MET.5 衍生报表，并对缺失事件发出运维告警。
+（EVC 指标见扩展文档 NESP‑OPS/NESP‑EVC）。
 - GOV.2 `A/E` 基线分布（以进入 Reviewing 或 Disputing 时的 E 为基线，见 VER）。
 - GOV.4 ForfeitPool 使用台账：统计没收累计额、提现金额，校验 `forfeitBalance` 不为负；公开用途分类（协议费用/社区授权用途）。
 - SLO（示例）：提现成功率 ≥ 99.9%；结清到账 P50 < 1 区块、P95 < 3 区块；资金滞留余额 < 0.1%（周）。
