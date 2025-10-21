@@ -12,7 +12,7 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 核心流程
 - Step 1 托管：买方把应付款先存入托管账户（E）。
 - Step 2 交付：卖方接单并完成交付/发货。
-- Step 3 验收放款（无争议）：买方验收通过，托管款一次性全额打给卖方（E）（按终态资金口径，若配置 Provider 费率，卖方实际可提为 `E − fee`，`fee = floor(E * bps / 10_000)`，买方退款不变）。
+- Step 3 验收放款（无争议）：买方验收通过，托管款一次性全额打给卖方（E）（按终态资金口径，若配置 FeeHook，卖方实际可提为 `E − fee`，买方退款不变）。
 - Step 4 发起争议（如有）：在限定时间内提出分歧。
 - Step 5 限时协商：双方在争议期内商定付款数额 A（A≤E）→ 按 A 付款，剩余返还买方。
 - Step 6 超时威慑：若超时仍未达成一致，则对称没收这笔托管款（双方都拿不到，划入 ForfeitPool；罚没资产默认沉淀于协议，可由治理模块提取用于协议费用；其他用途须经社区决议授权）。
@@ -157,12 +157,12 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - G.E6 `cancelOrder`（client）：
     - Condition：`state = Executing`、`readyAt` 未设置，且 `now ≥ startTime + D_due`。
     - Subject：`client`。
-    - Effects：状态转入 Cancelled。
+    - Effects：状态转入 Cancelled；将订单 `escrow` 全额按退款口径记账至买方可提余额（Refund），订单 `escrow` 清零。
     - Failure：条件未满足 MUST `revert`。
   - G.E7 `cancelOrder`（contractor，执行阶段）：
     - Condition：`state = Executing`。
     - Subject：`contractor`。
-    - Effects：状态转入 Cancelled。
+    - Effects：状态转入 Cancelled；将订单 `escrow` 全额按退款口径记账至买方可提余额（Refund），订单 `escrow` 清零。
     - Failure：条件未满足 MUST `revert`。
   - G.E9 `timeoutSettle`：
     - Condition：`state = Reviewing` 且 `now ≥ readyAt + D_rev`。
@@ -172,7 +172,7 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - G.E11 `cancelOrder`（contractor，评审阶段）：
     - Condition：`state = Reviewing`。
     - Subject：`contractor`。
-    - Effects：状态转入 Cancelled。
+    - Effects：状态转入 Cancelled；将订单 `escrow` 全额按退款口径记账至买方可提余额（Refund），订单 `escrow` 清零。
     - Failure：条件未满足 MUST `revert`。
   - G.E12 `settleWithSigs`：
     - Condition：`state = Disputing`，`now < disputeStart + D_dis`，`amountToSeller ≤ escrow`，并通过 EIP‑712/1271 签名、`nonce`、`deadline` 校验。
@@ -204,7 +204,7 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
     - 全量资金恒等式（审计）：分 `tokenAddr` 核对“合约资产余额 = Σ 未终态订单 escrow + Σ 用户聚合可提余额 + forfeitBalance”。
   - INV.9 比例路径兼容（可选）：`amountToSeller = floor(escrow * num / den)`；余数全部计入买方退款。实现 MUST 使用安全的“mulDiv 向下取整”或等效无溢出实现；任何溢出/下溢 MUST revert；禁止四舍五入与精度提升。
 - INV.10 Pull 语义：状态变更仅“记账可领额”（聚合到 `balance[token][addr]`），实际转账仅在 `withdraw(token)` 发生；治理提款为系统级外流，不属于用户 `withdraw(token)`，但须满足 INV.8 与安全约束；禁止在状态变更入口直接 `transfer`。
-  - INV.14 平台费（Provider Fee）：当订单处于 Settled 终态时，若已固化 `provider, feeBps`，则按 `fee = floor(amountToSeller * feeBps / 10_000)` 计入服务商可提余额；必须满足 `0 ≤ fee ≤ amountToSeller`，且守恒成立：`(amountToSeller − fee) + (escrow − amountToSeller) + fee = escrow`。当 `provider = address(0)` 或 `feeBps = 0` 时 `fee = 0`（不产生 Fee 记账与事件）；Cancelled/Forfeited 不产生平台费。
+  - INV.14 手续费（FeeHook）：当订单处于 Settled 终态时，若已配置 `feeHook`，则按 Hook 返回的 `fee` 计入手续费可提余额；必须满足 `0 ≤ fee ≤ amountToSeller`，且守恒成立：`(amountToSeller − fee) + (escrow − amountToSeller) + fee = escrow`。当 `feeHook = address(0)` 或 `fee = 0` 时不产生 Fee 记账与事件；Cancelled/Forfeited 不计费。
   - INV.11 锚点一次性：`startTime/readyAt/disputeStart` 一旦设置，MUST NOT 修改或回拨（仅允许“未设置 → 设置一次”）。
   - INV.12 计时器规则：`D_due/D_rev` 仅允许延后（单调增加，且在进入 Disputing 前）；`D_dis` 固定且不可延长。
   - INV.13 唯一机制：无争议路径必须全额结清；争议路径采用签名金额结清；金额口径始终满足 `A ≤ E`，链上仅记录托管与结清。
@@ -233,9 +233,9 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 
 ## 7) API 与事件契约（映射状态机/不变量）
 - 函数（最小集）：
-  - `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, provider, feeBps) -> orderId`
+  - `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtxHash) -> orderId`
     - 零值采用默认（MUST）：若 `dueSec/revSec/disSec` 传入 0，表示采用协议默认值（`1d/1d/7d`）；事件 `OrderCreated` 中的 `dueSec/revSec/disSec` 必须记录替换后的“生效值”（非 0）。
-  - `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, provider, feeBps, amount)`（payable）→ 创建并充值（ETH: `msg.value==amount`；ERC‑20: `SafeERC20.safeTransferFrom` amount）
+  - `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtxHash, amount)`（payable）→ 创建并充值（ETH: `msg.value==amount`；ERC‑20: `SafeERC20.safeTransferFrom` amount）
   - `depositEscrow(orderId, amount)`（payable；同上资产规则）
   - `acceptOrder(orderId)`；`markReady(orderId)`；`approveReceipt(orderId)`；`timeoutSettle(orderId)`
   - `raiseDispute(orderId)`；`settleWithSigs(orderId, payload, sig1, sig2)`；`timeoutForfeit(orderId)`
@@ -244,10 +244,10 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - `withdrawForfeit(tokenAddr, to, amount)`：治理模块调用，从 ForfeitPool 中提取指定资产；成功时触发 `ProtocolFeeWithdrawn`。
   - `extendDue(orderId, newDueSec)`；`extendReview(orderId, newRevSec)`（单调延后）
   - `commitEvidence(orderId, evc)`：订单参与者提交证据承诺；可多次调用；触发 `EvidenceCommitted`
-  - `getOrder(orderId) view`：返回 `{client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart, provider, feeBps}`。
+  - `getOrder(orderId) view`：返回 `{client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart, feeHook, feeCtxHash}`。
   - `withdrawableOf(tokenAddr, account) view`：读取聚合可提余额（涵盖 `Payout/Refund/Fee`）。
 - 事件（建议的最小充分字段；单一清单）：
-  - `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, provider, feeBps)`
+  - `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, feeHook, feeCtxHash)`
   - `EscrowDeposited(orderId, from, amount, newEscrow, via)`；`Accepted(orderId, escrow)`；`ReadyMarked(orderId, readyAt)`；`DisputeRaised(orderId, by)`
     - 字段口径：`via ∈ {address(0), forwarderAddr, entryPointAddr}`；`address(0)` 表示直接调用（`msg.sender == tx.origin`）；2771 记录转发合约地址，且 `isTrustedForwarder(via)=true`；4337 记录实现配置的 `EntryPoint` 地址。除上述三类外的合约调用 MUST `revert`（ErrUnauthorized）。不支持多重转发/嵌套；如检测到多跳 MUST `revert`（ErrUnauthorized）。授权失败为回滚路径，不发 `EscrowDeposited` 事件。
   - `DueExtended(orderId, oldDueSec, newDueSec, actor)`（`actor == client`）；`ReviewExtended(orderId, oldRevSec, newRevSec, actor)`（`actor == contractor`）

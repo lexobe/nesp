@@ -49,7 +49,7 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 
 ### 2.1 参与者与信息结构
 - 参与者：Client（买方）、Contractor（卖方）。
-- 系统角色：治理模块（Governance）；服务商（Provider，白名单内的第三方服务平台，按订单固化费率在 Settled 时记账 `Fee`，通过 `withdraw(token)` 提现）。不驱动订单状态机，不改变结算不变量。
+- 系统角色：治理模块（Governance）。不驱动订单状态机，不改变结算不变量。
 - 公开信息：状态、时间戳、托管额 E、事件与日志；
 - 私人信息：V（买方价值）、C（卖方成本）、质量主观信号。
 
@@ -74,7 +74,7 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 - 建议：支持“WETH 适配层”作为工程选项，但规范层必须支持原生 ETH。
 
 ### 2.6 参数协商与范围（规范）
-- 协商主体与生效时点：`E`、`D_due`、`D_rev`、`D_dis` 由 Client 与 Contractor 针对“每一笔订单”达成一致；实现必须在订单建立/接受时固化存储。订单同时固化 `provider` 与 `feeBps`（服务商与费率），且自固化后 MUST NOT 修改。允许 `provider = address(0)` 表示不配置服务商；此时 `feeBps MUST = 0`。
+- 协商主体与生效时点：`E`、`D_due`、`D_rev`、`D_dis` 由 Client 与 Contractor 针对“每一笔订单”达成一致；实现必须在订单建立/接受时固化存储。订单可固化手续费策略 `feeHook` 与上下文哈希 `feeCtxHash`（创建即锁定，不可修改）；允许 `feeHook = address(0)` 表示不计费。
 - 默认值：若 `dueSec/revSec/disSec` 传入 0，则采用协议默认 `D_due=1d=86_400s`、`D_rev=1d=86_400s`、`D_dis=7d=604_800s`；入库与事件需记录替换后的“生效值”。
 - 修改规则：`E` 仅可单调增加；`D_due/D_rev` 仅允许在争议发生前单调延后；`D_dis` 自设置后固定，不提供延长入口。
 - 有界性：三者必须为有限值且大于 0；为抵御重组，`D_dis ≥ 2·T_reorg`（由部署方按目标链给出估计）。
@@ -194,9 +194,9 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 - `Settled/Forfeited/Cancelled` 为终态；到达终态后不得再改变状态或资金记账；仅允许提现入口读取并领取既有可领额（若有）。
 - 终态资金口径：到达任一终态时，订单 `escrow` MUST 置为 0，并按终态路径完成记账：
   - Settled：记账三笔：
-    - 卖方 Payout：`payoutToSeller = amountToSeller − fee`（`fee = floor(amountToSeller * feeBps / 10_000)`，`0 ≤ fee ≤ amountToSeller`）；
+    - 卖方 Payout：`payoutToSeller = amountToSeller − fee`（`0 ≤ fee ≤ amountToSeller`）；
     - 买方 Refund：`refundToBuyer = escrow − amountToSeller`；
-    - 服务商 Fee：`fee` 记入 `provider` 的可提余额；
+    - 手续费 Fee：`fee` 记入手续费受益地址（由手续费策略计算/返回）；
     金额为 0 的 `Fee` 记账可省略事件；
   - Forfeited：将原订单 `escrow` 全额计入 `forfeitBalance[tokenAddr]`（罚没），不记入任何用户余额。
   - Cancelled：将原订单 `escrow` 全额记入买方可提余额（Refund）。
@@ -501,15 +501,14 @@ function _safeTransferIn(token, subject, amount) internal {
 - Pull/CEI/授权/重入：提现前清零、`nonReentrant`、授权校验与来源记录。
 - 非标资产：由适配层与白名单策略处理；异常资产路径显式失败。
 - 治理提款：实现 `forfeitBalance` 记账、`onlyGovernance` 守卫、CEI 顺序与 `nonReentrant`、ETH/ERC‑20 余额差核验；失败路径返回自定义错误（如 `ErrUnauthorized/ErrInsufficientForfeit`）。
- - 服务商平台费（结清记账）：
-   - 存储：`isProvider[addr]` 白名单、`providerFeeBps[addr]` 默认费率、可选全局上限 `bpsMax`；订单侧固化 `provider, feeBps`；
-   - 守卫：创建时校验地址在白名单、`feeBps == providerFeeBps[provider]` 且 `0 ≤ feeBps ≤ 10_000`（若设 `bpsMax`：`feeBps ≤ bpsMax`）；
-   - 结清：统一内部函数按 `fee = floor(A*bps/10_000)` 记账三笔 `Payout/Refund/Fee`（金额为 0 的 `Fee` 事件可省略），订单 `escrow` 清零；Cancelled/Forfeited 不计费。
+ - 手续费 Hook（结清记账）：
+   - 存储：订单固化 `feeHook` 与 `feeCtxHash`（创建即锁定，不可修改；`feeHook=0` 表示不计费）。
+   - 调用：结清时以 STATICCALL 调用 Hook 只读计算 `fee` 与受益地址，内核仅记账三笔 `Payout/Refund/Fee` 并清零 `escrow`；`fee=0` 的 `Fee` 事件可省略；Cancelled/Forfeited 不计费。
 
 ### 12.2 测试与验证（代表性）
 - 代表性用例：
   - 无争议全额/签名金额/超时没收；覆盖 A≤E、计时器边界、Pull/CEI、授权与签名重放。
-  - 平台费（Provider Fee）结清三笔记账：`Payout=A−fee`、`Refund=E−A`、`Fee=floor(A*bps/10_000)`，且 `escrow=0`、每种 kind≤1。
+  - 手续费（FeeHook）结清三笔记账：`Payout=A−fee`、`Refund=E−A`、`Fee=onSettleFee(...)`，且 `escrow=0`、每种 kind≤1。
   - 费率边界：`fee=0`（bps=0）与 `fee` 上限（`bps=bpsMax` 或 10_000）均应通过；签名结清（settleWithSigs）同样计费。
 ## 13. 分阶段开放与治理（Phased Opening & Governance）
 
