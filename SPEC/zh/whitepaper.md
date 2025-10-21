@@ -313,7 +313,7 @@ function _safeTransferIn(token, subject, amount) internal {
 ## 6. API 与事件（最小充分集）
 （统一说明）错误命名在本章为“示例化”（如 `ErrXxx`），部署可采用等价错误名，但须保持语义、守卫与回滚路径一致。
 
-（信息性）如需“证据承诺/证据合约”，可在应用层增加扩展接口与合约实现，内核不强制，也不纳入本规范评审。
+（信息性）证据承诺为可选扩展（NESP‑EVC：Evidence Commitments）；可在应用层增加扩展接口与合约实现，内核不强制，且不纳入本规范评审。
 
 ### 6.1 函数（最小集）
  - `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtx)`：创建订单，固化资产/时间锚点与手续费策略（`feeHook` 可为 `address(0)` 表示不计费；`feeCtx` 建议仅在事件中记录哈希）。
