@@ -1,0 +1,24 @@
+# Foundry
+cache/
+out/
+broadcast/
+
+# Dotenv file
+.env
+
+# Node modules
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+*.log
+
+# Coverage reports
+coverage/
+lcov.info
