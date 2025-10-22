@@ -92,6 +92,12 @@ contract NESPCore is INESPEvents {
     /// @notice 手续费超出限制
     error ErrFeeExceedsLimit();
 
+    /// @notice 零地址错误
+    error ErrZeroAddress();
+
+    /// @notice 自交易错误
+    error ErrSelfDealing();
+
     // ============================================
     // 存储
     // ============================================
@@ -131,8 +137,11 @@ contract NESPCore is INESPEvents {
 
     uint256 private _locked = 1;
 
+    /// @notice 重入错误
+    error ErrReentrant();
+
     modifier nonReentrant() {
-        require(_locked == 1, "Reentrant call");
+        if (_locked != 1) revert ErrReentrant();
         _locked = 2;
         _;
         _locked = 1;
@@ -147,7 +156,7 @@ contract NESPCore is INESPEvents {
      * @param _governance 治理地址
      */
     constructor(address _governance) {
-        require(_governance != address(0), "Zero governance");
+        if (_governance == address(0)) revert ErrZeroAddress();
         governance = _governance;
         nextOrderId = 1; // 订单 ID 从 1 开始
 
@@ -188,8 +197,8 @@ contract NESPCore is INESPEvents {
         bytes calldata feeCtx
     ) external returns (uint256 orderId) {
         // 参数校验
-        require(contractor != address(0), "Zero contractor");
-        require(contractor != msg.sender, "Self-dealing");
+        if (contractor == address(0)) revert ErrZeroAddress();
+        if (contractor == msg.sender) revert ErrSelfDealing();
 
         // 使用默认值（0 表示采用默认）
         if (dueSec == 0) dueSec = DEFAULT_DUE_SEC;
@@ -210,7 +219,8 @@ contract NESPCore is INESPEvents {
         order.revSec = revSec;
         order.disSec = disSec;
         order.feeHook = feeHook;
-        order.feeCtxHash = keccak256(feeCtx); // 仅存储哈希
+        order.feeCtxHash = keccak256(feeCtx); // 存储哈希（用于 E12 验证）
+        order.feeCtx = feeCtx; // 存储原始数据（用于 FeeHook 调用）
 
         // 触发事件
         emit OrderCreated(orderId, msg.sender, contractor, tokenAddr, dueSec, revSec, disSec, feeHook, order.feeCtxHash);
@@ -339,10 +349,14 @@ contract NESPCore is INESPEvents {
     }
 
     /**
-     * @notice E2: 取消订单（Initialized → Cancelled）
+     * @notice E2/E6/E7/E11: 取消订单（多状态 → Cancelled）
      * @param orderId 订单 ID
-     * @dev WP §3.1 Transition E2
-     *      守卫：Condition(Initialized) ∧ Subject(client)
+     * @dev WP §3.1 Transition E2/E6/E7/E11
+     *      注意：E2 守卫与 WP §3.1 存在差异
+     *      - WP §3.1 E2 声称 "client/contractor" 都可以取消 Initialized
+     *      - 实现只允许 client 取消 Initialized（contractor 未接单前无取消必要）
+     *      - 此差异已在 REVIEW_REPORT.md Issue #1 中记录，待澄清
+     *      守卫：见下方各状态分支
      *      效果：state ← Cancelled, 退款给 client
      */
     function cancelOrder(uint256 orderId) external nonReentrant {
@@ -351,11 +365,21 @@ contract NESPCore is INESPEvents {
         // 守卫：根据当前状态判断
         if (order.state == OrderState.Initialized) {
             // E2: Initialized → Cancelled (client only)
+            // 注意：实现仅允许 client，与 WP §3.1 描述不同
             if (msg.sender != order.client) revert ErrUnauthorized();
 
         } else if (order.state == OrderState.Executing) {
-            // E6/E7: Executing → Cancelled (双方都可以)
-            if (msg.sender != order.client && msg.sender != order.contractor) revert ErrUnauthorized();
+            // E6/E7: Executing → Cancelled
+            if (msg.sender == order.client) {
+                // E6: client 取消需要满足时间守卫（WP §3.3 G.E6）
+                // Condition: readyAt 未设置 且 now >= startTime + dueSec
+                if (order.readyAt != 0) revert ErrInvalidState(); // 已标记完成
+                if (block.timestamp < order.startTime + order.dueSec) revert ErrInvalidState(); // 未超时
+            } else if (msg.sender == order.contractor) {
+                // E7: contractor 可以随时取消（无时间限制）
+            } else {
+                revert ErrUnauthorized();
+            }
 
         } else if (order.state == OrderState.Reviewing) {
             // E11: Reviewing → Cancelled (contractor only)
@@ -414,6 +438,14 @@ contract NESPCore is INESPEvents {
         // 守卫：Condition
         if (order.state != OrderState.Executing && order.state != OrderState.Reviewing) revert ErrInvalidState();
 
+        // INV.6: 入口前抢占 - 检查是否应该优先触发超时结清
+        if (order.state == OrderState.Reviewing && order.readyAt > 0) {
+            if (block.timestamp >= order.readyAt + order.revSec) {
+                // 评审窗口已超时，应该使用 timeoutSettle 而非 approveReceipt
+                revert ErrExpired();
+            }
+        }
+
         // 守卫：Subject
         if (msg.sender != order.client) revert ErrUnauthorized();
 
@@ -433,6 +465,14 @@ contract NESPCore is INESPEvents {
 
         // 守卫：Condition
         if (order.state != OrderState.Executing && order.state != OrderState.Reviewing) revert ErrInvalidState();
+
+        // INV.6: 入口前抢占 - 检查是否应该优先触发超时结清
+        if (order.state == OrderState.Reviewing && order.readyAt > 0) {
+            if (block.timestamp >= order.readyAt + order.revSec) {
+                // 评审窗口已超时，不允许发起新争议
+                revert ErrExpired();
+            }
+        }
 
         // 守卫：Subject（双方都可以发起）
         if (msg.sender != order.client && msg.sender != order.contractor) revert ErrUnauthorized();
@@ -542,8 +582,8 @@ contract NESPCore is INESPEvents {
         // 验证 acceptor 签名
         if (!_verifySignature(digest, acceptorSig, acceptor)) revert ErrBadSig();
 
-        // 结清：A = amountToSeller
-        _settle(orderId, amountToSeller, SettleActor.Client); // 使用 Client 标识人工协商
+        // 结清：A = amountToSeller（使用 Negotiated 标识协商结清）
+        _settle(orderId, amountToSeller, SettleActor.Negotiated);
 
         // 触发额外事件（记录协商细节）
         emit AmountSettled(orderId, proposer, acceptor, amountToSeller, nonce);
@@ -666,7 +706,7 @@ contract NESPCore is INESPEvents {
                 order.client,
                 order.contractor,
                 amountToSeller,
-                "" // feeCtx 由调用方提供（在 settleWithSigs 中验证哈希）
+                order.feeCtx // 传递存储的原始 feeCtx
             ) returns (address _recipient, uint256 _fee) {
                 // 验证 fee ≤ amountToSeller
                 if (_fee > amountToSeller) revert ErrFeeExceedsLimit();
@@ -678,8 +718,10 @@ contract NESPCore is INESPEvents {
             }
         }
 
-        // 三笔记账
+        // 三笔记账（遵循 WP §4.1 INV.14 守恒式）
+        // 守恒式: payoutToContractor + refund + fee = escrow
         uint256 payoutToContractor = amountToSeller - fee;
+        uint256 refund = (amountToSeller < order.escrow) ? (order.escrow - amountToSeller) : 0;
 
         // 1. contractor 收款（Payout）
         if (payoutToContractor > 0) {
@@ -692,10 +734,12 @@ contract NESPCore is INESPEvents {
         }
 
         // 3. client 退款（Refund，如果 A < E）
-        if (amountToSeller < order.escrow) {
-            uint256 refund = order.escrow - amountToSeller;
+        if (refund > 0) {
             _creditBalance(orderId, order.client, order.tokenAddr, refund, BalanceKind.Refund);
         }
+
+        // 守恒验证（开发模式可启用 assert，生产模式使用注释）
+        // assert(payoutToContractor + refund + fee == order.escrow);
 
         // 触发事件
         emit Settled(orderId, amountToSeller, order.escrow, actor);
@@ -823,7 +867,7 @@ contract NESPCore is INESPEvents {
      */
     function setGovernance(address newGovernance) external {
         if (msg.sender != governance) revert ErrUnauthorized();
-        require(newGovernance != address(0), "Zero governance");
+        if (newGovernance == address(0)) revert ErrZeroAddress();
         governance = newGovernance;
     }
 

@@ -33,6 +33,17 @@
 - PRs: link issues, describe changes, note impacted spec sections (E.x/INV.x/EVT.x), add before/after for events/anchors, keep diffs small
 - Bilingual flow: update SPEC/zh first, then sync SPEC/en; record in `L10N/status.md`
 
+## Review Workflow（RWO）
+- 采用 RWO v1.9（Recursive · WHW · Only），默认模式为 Deep-Dive；信息性段落在标题处注明即可跳过评审。
+- 保持固定输出顺序：`TL;DR → 一页表 → 第一性分解 → 缺口与风险 → 修复集 → 验证计划 → 未决问题 → 证据与引用`。
+- 对枚举/表格型内容（函数、事件、守卫）视为“列举检查”，不用强行压缩到 ≤3 步；引用外部工件时提供具体路径或仓库位置即可。
+- 快速校验提醒：信息性段落加注“不计入规范评审”；多守卫/事件可用脚本批量校验；缺口真属红线时才升 P0。
+
+## Expert Personas
+- 详细角色说明存放于 `.claude/experts/`（如 `blade.md`, `bob.md`, `glen.md`, `nenade.md`, `tim.md`, `vitalik.md`）。
+- 根据评审场景选择 Persona，触发短句示例：`使用白隼：Deep-Dive`、`召唤 Bob：平台工程评审` 等。
+- 产出需与 Persona 约定保持一致（结构、口吻、评分项等）；如需切换，先在评论中声明新的 Persona 与模式。
+
 ## Security & Configuration Tips
 - No secrets in repo; no env needed for docs
-- Contracts (later): pull-based withdraw, CEI, nonReentrant, EIP-712/1271 checks, ERC-2771/4337 subject resolution
+- Contracts (later): pull-based withdraw, CEI, nonReentrant, EIP-712/1271 checks, and (if using meta-transactions) ERC-2771/4337 subject resolution

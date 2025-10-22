@@ -109,14 +109,11 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - Effects：`D_rev` 更新为 `newRevSec` 并发出 `ReviewExtended`。
   - Failure：条件未满足 MUST `revert`（`ErrInvalidState`）。
 - SIA3 `depositEscrow(orderId, amount)`（`payable`）：
-  - Condition：`amount > 0`；`state ∈ {Initialized, Executing, Reviewing}`；当订单资产为 ETH 时 MUST `msg.value == amount`，为 ERC‑20 时 MUST `msg.value == 0` 且 `SafeERC20.transferFrom(payer, this, amount)` 成功。
-  - Subject：
-    - 受信任的 2771/4337 路径：解析得到的 `subject` MUST 等于 `client`；
-    - 其他任意地址：视为赠与主体，须自行完成授权并承担没收风险。
+  - Condition：`amount > 0`；`state ∈ {Initialized, Executing, Reviewing}`；当订单资产为 ETH 时 MUST `msg.value == amount`，为 ERC‑20 时 MUST `msg.value == 0` 且 `SafeERC20.transferFrom(subject, this, amount)` 成功。
+  - Subject（MUST）：permissionless。允许任意地址作为调用者/扣款主体（subject）。若实现支持 2771/4337，则解析后的最终用户地址作为 `subject`；否则以 `msg.sender` 为 `subject`；均不得因调用通道或调用者类型而拒绝入金。
   - Effects：`escrow ← escrow + amount`（单调增加），触发 `EscrowDeposited`。
   - Failure：
     - `state ∈ {Disputing, Settled, Forfeited, Cancelled}` MUST `revert`（`ErrFrozen` 或 `ErrInvalidState`）；
-    - 主体不符 MUST `revert`（`ErrUnauthorized`）；
     - 资产/转账校验失败 MUST `revert`（`ErrAssetUnsupported` 或等效错误）。
 
 ### 3.2 守卫与副作用（MUST）
@@ -216,7 +213,7 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - 签名不匹配/域不符 → `ErrBadSig`
   - `nonce` 已用/冲突 → `ErrReplay`
   - 报文超期（`deadline < now`）→ `ErrExpired`
-  - 非授权充值主体（SIA3 授权校验失败）→ `ErrUnauthorized`
+  - （保留）授权失败 → `ErrUnauthorized`（不适用于 `depositEscrow`；`depositEscrow` 为 permissionless）
   - 争议冻结期充值 → `ErrFrozen`
   - 终态/非法状态的入口调用 → `ErrInvalidState`
   - 托管不足/超额 → `ErrOverEscrow`
@@ -237,6 +234,10 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
     - 零值采用默认（MUST）：若 `dueSec/revSec/disSec` 传入 0，表示采用协议默认值（`1d/1d/7d`）；事件 `OrderCreated` 中的 `dueSec/revSec/disSec` 必须记录替换后的“生效值”（非 0）。
   - `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtx, amount)`（payable）→ 创建并充值（ETH: `msg.value==amount`；ERC‑20: `SafeERC20.safeTransferFrom` amount）
   - `depositEscrow(orderId, amount)`（payable；同上资产规则）
+    - 权限（MUST）：permissionless。允许任意 EOA 或合约调用，不得因为调用通道（`via`）而拒绝入金。
+    - 扣款主体（MUST）：
+      - ERC‑20：从“主体 subject”扣至核心合约（`SafeERC20.safeTransferFrom(subject, this, amount)`），subject 解析见下方 `EscrowDeposited` 事件的 `from/via` 口径；
+      - ETH：`msg.value == amount`。
   - `acceptOrder(orderId)`；`markReady(orderId)`；`approveReceipt(orderId)`；`timeoutSettle(orderId)`
   - `raiseDispute(orderId)`；`settleWithSigs(orderId, payload, sig1, sig2)`；`timeoutForfeit(orderId)`
   - `cancelOrder(orderId)`
@@ -248,7 +249,10 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 - 事件（建议的最小充分字段；单一清单）：
   - `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, feeHook, feeCtxHash)`
   - `EscrowDeposited(orderId, from, amount, newEscrow, via)`；`Accepted(orderId, escrow)`；`ReadyMarked(orderId, readyAt)`；`DisputeRaised(orderId, by)`
-    - 字段口径：`via ∈ {address(0), forwarderAddr, entryPointAddr}`；`address(0)` 表示直接调用（`msg.sender == tx.origin`）；2771 记录转发合约地址，且 `isTrustedForwarder(via)=true`；4337 记录实现配置的 `EntryPoint` 地址。除上述三类外的合约调用 MUST `revert`（ErrUnauthorized）。不支持多重转发/嵌套；如检测到多跳 MUST `revert`（ErrUnauthorized）。授权失败为回滚路径，不发 `EscrowDeposited` 事件。
+    - 字段口径（更新）：
+      - `via` 表示调用通道来源：`address(0)` 为直连（`msg.sender == tx.origin`）；否则等于本次调用的 `msg.sender`（任意合约，包括 2771/4337/Router 等）。`via` 仅用于审计溯源，不作为授权判据。
+      - `from` 表示扣款主体 subject：若实现支持 2771/4337，则解析后等于最终用户地址；否则等于 `msg.sender`。无论是否支持转发，均不得仅因 `via` 取值而拒绝 `depositEscrow`。
+      - 信息性：部署侧可配置受信转发器/EntryPoint 白名单用于归因与遥测，但不是规范性约束；是否拒绝“多跳/嵌套”由实现策略决定（信息性）。授权失败仍为回滚路径且不发事件。
   - `DueExtended(orderId, oldDueSec, newDueSec, actor)`（`actor == client`）；`ReviewExtended(orderId, oldRevSec, newRevSec, actor)`（`actor == contractor`）
   - `Settled(orderId, amountToSeller, escrow, actor)`（`actor ∈ {Client, Timeout}`）
   - `AmountSettled(orderId, proposer, acceptor, amountToSeller, nonce)`
@@ -264,6 +268,8 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 - 错误（示例）：ERR.1 `ErrInvalidState`；ERR.2 `ErrGuardFailed`；ERR.3 `ErrAlreadyPaid`；ERR.4 `ErrExpired`；ERR.5 `ErrBadSig`；ERR.6 `ErrOverEscrow`；ERR.7 `ErrFrozen`；ERR.8 `ErrAssetUnsupported`；ERR.9 `ErrReplay`；ERR.10 `ErrUnauthorized`。
 - 映射规则（MUST）：E.x ↔ API/EVT ↔ INV.x ↔ MET.x/GOV.x 一一可追溯。
  - （工程建议）资产支持与适配层细节见平台工程文档。
+
+ 
 
 ## 8) 可观测性与 SLO
 - 指标（示例）：

@@ -9,7 +9,7 @@
 - Type: Standards Track (ERC)  
 - Category: ERC  
 - Created: 2025-10-09  
-- Requires: ERC-20, ERC-712, ERC-2771, ERC-4337 (informative)  
+- Requires: ERC-20, ERC-712 (ERC-2771 / ERC-4337 optional)  
 - Replaces: None  
 - License: CC0-1.0
 
@@ -27,10 +27,10 @@ Centralised escrow platforms introduce counterparty risk, custodial control, fee
 
 - Client: buyer funding the escrow.  
 - Contractor: seller delivering the agreed work/goods.  
-- Resolved Subject: the business-level caller resolved from a transaction (direct `msg.sender`, `ERC2771` `_msgSender()`, or `ERC4337` `userOp.sender`).  
+- Resolved Subject: the business-level caller resolved from a transaction (direct `msg.sender`; deployments MAY support `ERC2771` `_msgSender()` or `ERC4337` `userOp.sender`).  
 - Escrow (E): total funds deposited for the order, denominated in ETH or an ERC-20 token.  
 - Settlement Amount (A): amount released to contractor after settlement (`0 ≤ A ≤ E`).  
-- ForfeitPool: logical bucket holding forfeited escrow (remains in contract balance; never redistributed).  
+- ForfeitPool: logical bucket holding forfeited escrow. Funds default to remain in the contract balance and may only be withdrawn via governance-controlled `withdrawForfeitPool`, limited to protocol fees or community-mandated uses.  
 - States: Initialized, Executing, Reviewing, Disputing, Settled, Forfeited, Cancelled.  
 - Timers: absolute anchors (startTime, readyAt, disputeStart) and configurable windows (D_due, D_rev, D_dis).
 

@@ -1,170 +1,108 @@
 # [DISCUSSION] NESP — 无仲裁托管结算协议（限时争议 · 对称没收 · 零协议费）
 
-**Tags**: EIPs, ERC, escrow, dispute, symmetric-forfeit, zero-fee, 2771, 4337
+**Tags**: EIPs, ERC, escrow, dispute, symmetric-forfeit, zero-fee, trustless, rollup
 
-> 本草稿对齐 `SPEC/zh/whitepaper.md`（唯一语义源）。文中函数、事件、状态与不变量均引用白皮书编号（E.x / INV.x / MET.x）。
+> 本帖介绍并征求反馈的 NESP（No-Arbitration Escrow Settlement Protocol）协议，完整规范见 `SPEC/zh/whitepaper.md`（唯一语义源）与 `EIP-DRAFT/eip-nesp.md`。所有函数、事件、状态与不变量均引用白皮书锚点（E.x / INV.x / MET.x）。
 
 ---
 
 ## TL;DR
 
-NESP（No-Arbitration Escrow Settlement Protocol）面向 A2A 市场与钱包厂商，需要在无仲裁、一次性交付的场景下保持可信中立，不把裁量权交给多签或治理委员会。
-
-对这些集成方而言的关键机制：
-
-1. **限时状态机**：履约窗口 `D_due`、评审窗口 `D_rev`、争议窗口 `D_dis`（§2.2，§3.1），与 A2A 会话中的“交付截止”“客户确认”“冷静期”消息一一映射。  
-2. **对称没收（E13 / INV.8）**：争议窗口超时未协商，双方押金一并罚没，以定时惩罚而非仲裁来抑制僵局。  
-3. **零协议费（§1.3 / INV.14 / MET.5）**：所有结算路径都满足 `escrow_before = payout + refund`，否则 `ErrFeeForbidden`，平台如需收费必须在更高层自加条款。  
-4. **Pull 结算（INV.10）**：状态转移仅记账，资金由 `withdraw` 主动拉取且附带 `nonReentrant`，外部攻击面更小。
-
-状态流程回顾：  
-`Initialized` →（E1）`Executing` →（E3）`Reviewing` →（E4/E9）`Settled` 或（E5/E10）`Disputing` →（E12）`Settled` /（E13）`Forfeited`；若守卫不满足，仍可走取消路径（E2/E6/E7/E11）。
+1. **NESP 是什么**：一个无信任（trustless）、面向 A2A 交易的托管结算协议，承诺无仲裁、零协议费、对称罚没威慑、Pull 式提现。  
+2. **关键机制**：  
+   - 限时状态机（履约 `D_due`、评审 `D_rev`、争议 `D_dis`），保障流程可预期（§3）。  
+   - 对称没收（E13 / INV.8）：争议超时双方押金同时没收，形成“拖延无利可图”的博弈结构。  
+   - `A ≤ E`、零协议费（INV.14）：任何扣费都会 `ErrFeeForbidden`，记录在 `MET.5`。  
+   - Pull 结算（INV.10）：状态机只记账，真实资金在 `withdraw` 时结算，配合 `nonReentrant`。  
+3. **兼容性**：默认直连调用，部署方可选启用 ERC-2771/4337 等 AA 通道，但不得改变金额/时间语义（§6.3）。  
+4. **求反馈**：窗口参数、签名域扩展、多主体协作、声誉/女巫护栏、观测事件等细节欢迎探讨。
 
 ---
 
-## Motivation
+## 为什么我们需要 NESP？
 
-- 中心化托管依赖平台仲裁与抽成，缺乏可信中立；去中心化仲裁又引入治理复杂度。  
-- Rollup、AA（ERC-2771/4337）与代理经济兴起，需要**最小可信托管乐高**：可审计、可复现、易组合。  
-- 过往 Magicians 上的 A2A 讨论（如委托执行控制器、账户绑定代理）多依赖多签或治理兜底，本帖尝试提供“定时惩罚、零裁量”的替代路线。  
-- NESP 将“纠纷裁决”转化为“时间边界 + 押金结构”，通过 INV.13（唯一机制）让合作成为支配策略。
-
----
-
-## Scope & Non-Goals
-
-**在范围内**
-- 单笔托管（ETH/ERC-20），Client→Contractor 的一次性交付；
-- 必备函数/事件/错误（§6.1/§6.2），含 2771/4337 来源解析（§6.3）；
-- 可观测指标与 SLO（§7.1/§7.2），用于公共审计。
-
-**不在范围**
-- 多阶段里程碑、多币种篮子、仲裁/治理/评分系统；
-- 平台费、收益再分配、外层风控策略（留给上层实现）。
+- **现状痛点**：中心化托管平台收取费用、依赖仲裁；去中心化仲裁框架则需要额外治理与仲裁者。  
+- **Rollup-centric**：顺着以太坊“L1 极简、L2 创新”的路线，NESP 被设计成无需任何共识层改动的合约级积木，可部署在任意 Rollup / L2 上。  
+- **NESP 的定位**：提供一个最小、可审计的结算骨干，把“裁决”转化为“时间 + 押金”组合，既避开仲裁，又能形成合作激励。  
+- **信任最小化**：所有路径要么全额结清、要么签名协商、要么对称没收。没有裁量、没有协议内收费，且所有状态与金额都可由第三方复验。
 
 ---
 
-## State Machine（§3）
+## 协议核心（白皮书 §3 / §4）
 
-| 转换 | 触发函数 | 关键守卫 | 结果 | A2A 消息映射 |
-|------|----------|----------|------|----------------|
-| E1 | `acceptOrder` | `state=Initialized` 且主体=contractor | 进入 `Executing`，设置 `startTime` | 承包方：“我接单了。” |
-| E3 | `markReady` | `now < startTime + D_due` | 锚定 `readyAt`，进入 `Reviewing` | 承包方：“交付物就绪/已发货。” |
-| E4/E9 | `approveReceipt` / `timeoutSettle` | `state ∈ {Executing,Reviewing}` / `now ≥ readyAt + D_rev` | 全额结清（INV.1） | 客户：“确认收货。” / 客户超时未回。 |
-| E5/E10 | `raiseDispute` | 主体 ∈ {client, contractor} | 冻结 escrow，记录 `disputeStart` | 任一方：“有问题，请暂停。” |
-| E12 | `settleWithSigs` | `A ≤ escrow`，双签有效 | 金额型结清（INV.2/INV.3） | 双方签署协商金额。 |
-| E13 | `timeoutForfeit` | `now ≥ disputeStart + D_dis` | 对称没收（INV.8） | 系统：“争议过期，双方押金被没收。” |
-| E2/E6/E7/E11 | `cancelOrder` | 详见守卫 G.E6/G.E7/G.E11 | 取消订单 | 守卫允许下的任意一方撤单。 |
+| 转换 | 函数 | 条件 | 说明 |
+|------|------|------|------|
+| E1 | `acceptOrder` | `state=Initialized` 且主体=contractor | 进入执行态，记录 `startTime` |
+| E3 | `markReady` | `now < startTime + D_due` | 锚定 `readyAt`，进入评审态 |
+| E4/E9 | `approveReceipt` / `timeoutSettle` | 客户确认或评审超时 | `amountToSeller = escrow` |
+| E5/E10 → E12/E13 | `raiseDispute` → `settleWithSigs` / `timeoutForfeit` | 任一方争议，之后协商或没收 | 协商签名满足 `A ≤ E`；超时双方没收 |
+| E2/E6/E7/E11 | `cancelOrder` | 守卫限制 | 根据守卫条件取消订单 |
+| 提现 | `withdraw` | Pull 结算、`nonReentrant` | 满足 INV.5 幂等 |
 
-> 任何状态变更前先检查冻结/终态守卫：`state ∈ {Disputing}` → `ErrFrozen`；终态 → `ErrInvalidState`。
-
----
-
-## Minimal Interface（§6.1）
-
-规范性的最小函数集合（所有入口均遵循 CEI，Pull 语义）：
-
-```
-createOrder(tokenAddr, contractor, dueSec, revSec, disSec) -> orderId
-createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, amount) payable
-depositEscrow(orderId, amount) payable
-acceptOrder(orderId)
-markReady(orderId)
-approveReceipt(orderId)
-timeoutSettle(orderId)
-raiseDispute(orderId)
-settleWithSigs(orderId, payload, sigClient, sigContractor)
-timeoutForfeit(orderId)
-cancelOrder(orderId)
-withdraw(tokenAddr)
-getOrder(orderId) view -> {client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart}
-withdrawableOf(tokenAddr, account) view -> uint256
-extendDue(orderId, newDueSec)
-extendReview(orderId, newRevSec)
-```
-
-错误集合：`ErrInvalidState / ErrExpired / ErrBadSig / ErrOverEscrow / ErrFrozen / ErrFeeForbidden / ErrAssetUnsupported / ErrReplay / ErrUnauthorized`（§5.2）。
-
-2771/4337：解析后的业务主体 `subject` 用于所有守卫，`via` 字段写入事件（§6.3）。
+**不变量**：  
+- `INV.1–INV.4`：单次记账、幂等提现。  
+- `INV.5`：提现幂等。  
+- `INV.8`：对称没收。  
+- `INV.10`：Pull 结算。  
+- `INV.11/INV.12`：锚点一次性、计时器单调。  
+- `INV.14`：零协议费。
+- 这些约束确保资金路径完全可验证，观测者无需信任合约作者或仲裁方即可推导结果。
 
 ---
 
-## Events & Observability（§6.2，§7）
+## 事件与观测
 
-最小事件：
-```
-OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, ts)
-EscrowDeposited(orderId, from, amount, newEscrow, ts, via)
-Accepted(orderId, escrow, ts)
-ReadyMarked(orderId, readyAt, ts)
-DueExtended(orderId, oldDueSec, newDueSec, ts, actor)
-ReviewExtended(orderId, oldRevSec, newRevSec, ts, actor)
-DisputeRaised(orderId, by, ts)
-Settled(orderId, amountToSeller, escrow, ts, actor)   // actor∈{Client,Timeout}
-AmountSettled(orderId, proposer, acceptor, amountToSeller, nonce, ts)
-Forfeited(orderId, ts)
-Cancelled(orderId, ts, cancelledBy)                  // cancelledBy∈{Client,Contractor}
-BalanceCredited(orderId, to, tokenAddr, amount, kind, ts) // kind∈{Payout,Refund}
-BalanceWithdrawn(to, tokenAddr, amount, ts)
-```
+最小事件集合（§6.2）：`OrderCreated`、`EscrowDeposited`、`Accepted`、`ReadyMarked`、`DisputeRaised`、`Settled`、`AmountSettled`、`Forfeited`、`Cancelled`、`BalanceCredited`、`BalanceWithdrawn` 等。  
+核心指标（§7.1）：  
+- `MET.1` 结清延迟 P95  
+- `MET.4` 协商接受率  
+- `MET.5` 零费违规次数（应保持 0）  
+- `GOV.1`/`GOV.3` 终态 / 争议分布  
 
-公共指标示例（§7.1）：
-- `MET.1` 结清延迟 P95；`MET.4` 协商接受率；`MET.5` 零费违规次数（应恒为 0）；  
-- `GOV.1` 终态分布；`GOV.3` 争议时长；  
-- 计数去重规则详见 §7.1。
-
-SLO 判据（§7.2）：`SLO_T(W) := (MET.5=0) ∧ (forfeit_rate ≤ θ) ∧ (acceptance_rate ≥ β) ∧ (p95_settle ≤ τ)`。
+`EscrowDeposited.via` 默认 `address(0)`；若部署启用受信通道，可记录 `forwarder/EntryPoint`。
 
 ---
 
-## Security Considerations（§5）
+## 安全与实现提示（§5 / §6）
 
-- **签名与重放**：`settleWithSigs` 采用 EIP-712/EIP-1271 域 `{chainId, contract, orderId, tokenAddr, amountToSeller, proposer, acceptor, nonce, deadline}`（§5.1）。  
-- **CEI & Reentrancy**：除 `withdraw`、`transferFrom` 外禁止外部调用；`withdraw` 为 `nonReentrant`（§5.3）。  
-- **时间守卫**：`D_due/D_rev` 仅允许单调延长；`D_dis` 固定不变（INV.12）。  
-- **零协议费**：任何违背 INV.14 的路径必须 `revert ErrFeeForbidden`；建议以 `MET.5` 持续监控。  
-- **非标资产**：若余额差不等于转账额，立即 `ErrAssetUnsupported`（INV.7）。
-- **对称没收与女巫成本**：僵持的代价与合作相同，除非攻击者自担双方押金；押金+计时器让理性女巫更倾向合作，仍欢迎社区补充信誉、质押等低成本身份场景的缓解策略。
+- **签名安全**：`settleWithSigs` 使用域 `{chainId, contract, orderId, tokenAddr, amountToSeller, proposer, acceptor, nonce, deadline}`，防跨单/跨链重放。  
+- **CEI & 重入**：除 `withdraw` 外不得外部调用；`withdraw` 必须 `nonReentrant` 并先清零余额。  
+- **计时器优先权**：入口在超时条件成立时必须优先执行 `timeout*`，防延迟勒索。  
+- **非标资产**：对 fee-on-transfer、rebase 代币无法对账时应 `revert ErrAssetUnsupported`。  
+- **AA 支持（可选）**：若启用 2771/4337，需要配置受信地址、拒绝多跳，并确保行为等价于直连调用。
 
----
+## Rollup / AA 部署提示
 
-## Compatibility & Extensibility
-
-- 资产：ETH / ERC-20（原生资产需匹配 `msg.value`；ERC-20 使用 SafeERC20）。  
-- 调用来源：直连、受信转发（2771）、EntryPoint（4337）；禁止多跳链路。  
-- 上层可扩展押金/评分/复合里程碑，但需保证核心状态机与不变量不被破坏。
+- 协议核心无需任何 L1 修改，可直接在任意 Rollup / L2 部署。  
+- 若 Rollup 运行方计划提供受信转发或 EntryPoint，请公布监控/熔断策略（例如如何观测 `MET.5`、何时停写），以便大家对齐实践。  
+- 欢迎分享在 L2 环境中调用 NESP 的样例（Bundler、Paymaster、意图执行器等），帮助我们验证“协议极简 + 实现多样”的目标。
 
 ---
 
-## Open Questions（征求社区意见）
+## 开放问题（欢迎讨论）
 
-1. **窗口参数**：`D_due/D_rev/D_dis` 的默认值与链级最小/最大约束；是否需要跨链差异化建议？  
-2. **争议落点**：是否允许部署方调整超时落点（如某些场景倾向退款而非罚没）？  
-3. **签名域扩展**：是否需要 `termsHash` 或 `deliveryHash` 作为可选字段？  
-4. **指标采集**：是否需要标准化 `Outcome` 汇总事件以便索引器消费？  
-5. **多资产/多阶段**：社区是否需要在标准层保留扩展钩子，还是保持核心最小化？
-6. **多主体 A2A**：若同一订单存在多于两位主体（co-op/DAO 小组），无仲裁条件下的最佳实践为何？  
-7. **信誉 / 女巫护栏**：标准是否应推荐配套的 SBT、质押或信用评分，以降低低成本身份对对称没收的滥用？
-
----
-
-## References
-
-- `SPEC/zh/whitepaper.md`（版本对齐于本草稿编写时最新提交）  
-- `EIP-DRAFT/eip-nesp.md`（正在补完的 ERC 草案骨架）  
-- `SPEC/commons`（待补充的状态机图、流程示例）  
-- `TESTS/`（计划中的 Foundry/Hardhat 骨架）
+1. `D_due/D_rev/D_dis` 的默认值和链级约束有什么建议？  
+2. 是否允许某些部署在超时后偏向退款而非对称没收？怎样保持可信中立？  
+3. `settleWithSigs` 是否需要 `termsHash` / `deliveryHash` / `intentId` 等扩展字段？  
+4. 是否需要额外的 `Outcome` 聚合事件，便于索引器汇总？  
+5. 多阶段或多资产场景是否应留扩展钩子，还是维持最小接口？  
+6. 多主体（多个承包方/委托方）如何在无仲裁前提下拆分押金与收益？  
+7. 对称没收是否需要配合链上声誉/SBT/质押等机制以限制女巫攻击？
 
 ---
 
-## Next Steps
+## 期待社区反馈的方向
 
-1. 收集 Magicians 反馈，并记录其与既有 A2A 讨论（委托执行、账户代理等）的差异；采纳部分同步写入 `EIP-DRAFT/eip-nesp.md` 的 Rationale / Security / Open Issues。  
-2. 在 EthResearch 发布配套博弈分析（§9、§16.3），并做双向交叉链接，方便读者比较模型。  
-3. 与钱包 / 市场 / AA 提供方合作，验证 2771/4337 流程、签名样本与事件口径，同时公布测试脚本位置。  
-4. 一旦社区形成共识，将推荐的信誉 / 女巫护栏方案收录到 `SPEC/commons`。
+- 协议安全性或经济激励是否有遗漏？  
+- 是否有实际案例/需求能验证或挑战 NESP 的设计？  
+- 有没有建议的参数范围、测试用例、参考实现？  
+- 账户抽象或意图执行团队是否愿意提供调用样例？  
 
----
+我们计划：
+1. 将本帖收集的反馈整理进 `EIP-DRAFT/eip-nesp.md` 的 Rationale / Security / Open Issues。  
+2. 补齐一个最小复现实验（Foundry/脚本），验证 `INV.14`、`INV.8` 等不变量，方便社区复查。  
+3. 在 ethresear.ch 发布博弈与参数分析（白皮书 §9/§16.3 的扩展），并与本帖互链。  
+4. 与愿意试用的团队合作，补充示例代码与测试脚本（`TESTS/` 目录），尤其欢迎 Rollup/AA 团队提交调用范例。  
+5. 若形成共识，将声誉/女巫护栏等补充设计记录在 `SPEC/commons`。
 
-**English Abstract**  
-NESP defines a zero-fee, no-arbitration escrow settlement standard with bounded performance/review/dispute windows and symmetric forfeiture. The minimal interface (`createOrder`, `raiseDispute`, `settleWithSigs`, `timeoutForfeit`, etc.), event schema, invariants (`A ≤ E`, zero-fee identity), and AA-friendly provenance rules (2771/4337) are aligned with the Chinese SSOT. We welcome feedback on default timeout outcomes, timer bounds, optional signatures, observability requirements, multi-agent variants, and recommended reputation / Sybil guardrails before advancing the ERC draft.
+谢谢阅读，欢迎在本帖直接分享观点、提出问题或附上相关实验结果，让 NESP 成为社区共同雕琢的无仲裁结算协议。

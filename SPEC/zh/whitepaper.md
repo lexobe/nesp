@@ -115,14 +115,11 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
   - Failure：条件未满足 MUST `revert`（`ErrInvalidState`）。
 - SIA3 `depositEscrow(orderId, amount)`（`payable`）：
   - Condition：`amount > 0`；`state ∈ {Initialized, Executing, Reviewing}`；订单资产为 ETH 时 MUST `msg.value == amount`，为 ERC‑20 时 MUST `msg.value == 0` 且 `SafeERC20.safeTransferFrom(subject, this, amount)` 成功。
-  - Subject：
-    - 受信路径（2771/4337）：解析出的 `subject` MUST 等于 `client`；
-    - 非受信路径直连 EOA：视为自担没收风险的赠与方，需自行完成代币转移授权；
-    - 非受信合约调用：MUST `revert`（`ErrUnauthorized`），遵循 §6.3 的授权与来源规则。
+  - Subject（权限，MUST）：permissionless。允许任意地址调用本入口，不因调用通道或调用者类型而拒绝入金。
+    - 主体解析与归因（信息性）：若实现支持 2771/4337，则解析得到的 `subject` 作为扣款主体并记录于事件 `from`；否则以 `msg.sender` 作为 `from`；`via` 记录调用通道来源，供审计溯源，不作为授权判据。
   - Effects：`escrow ← escrow + amount`（单调增加），触发 `EscrowDeposited`。
   - Failure：
     - `state ∈ {Disputing, Settled, Forfeited, Cancelled}` MUST `revert`（`ErrFrozen` 或 `ErrInvalidState`）；
-    - 主体不符 MUST `revert`（`ErrUnauthorized`）；
     - 资产/转账校验失败 MUST `revert`（`ErrAssetUnsupported` 或等效错误）。
 
 ### 3.3 守卫与副作用
@@ -361,7 +358,8 @@ function _safeTransferIn(token, subject, amount) internal {
 ### 6.3 授权与来源（可选受信路径）
 - 默认情形 `EscrowDeposited.via = address(0)`，表示直接调用（`msg.sender == tx.origin`）。若部署开启受信路径（如 2771 转发或 4337 EntryPoint），`via` 记录该受信合约地址。
 - 需提前登记受信转发器/EntryPoint，并在链上校验：2771 模式下 `isTrustedForwarder(via)=true`；4337 模式下 `via` 必须等于配置的 `EntryPoint`。
-- 其他合约调用 MUST `revert`（ErrUnauthorized）。不支持多重转发/嵌套；检测到多跳 MUST `revert`。授权失败为回滚路径，不发 `EscrowDeposited` 事件。
+- 例外与说明：本节的受信路径约束不适用于 `depositEscrow`（该入口 permissionless，允许任意地址调用；`via` 仅作审计记录，不作为授权判据）。
+- 其他合约调用（除 `depositEscrow` 外的状态变更入口）MUST `revert`（ErrUnauthorized）。不支持多重转发/嵌套；检测到多跳 MUST `revert`。授权失败为回滚路径，不发 `EscrowDeposited` 事件。
 
 #### 定义与可观测锚点（补充，不改变语义）
 - “多跳（multi‑hop）”界定：在同一笔调用中，经由多个转发/中继合约层层转发至本合约的情形（除受信任的 `forwarder` 或配置的 `EntryPoint` 之外的额外一跳及以上），均视为“多跳”。

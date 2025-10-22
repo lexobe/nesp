@@ -8,14 +8,14 @@
 
 ## TL;DR
 
-NESP (No-Arbitration Escrow Settlement Protocol) targets agent-to-agent (A2A) marketplaces and wallets that need credibly neutral, one-shot settlement without delegating judgement to multisigs or governance committees.
+NESP (No-Arbitration Escrow Settlement Protocol) targets agent-to-agent (A2A) marketplaces that need credibly neutral, one-shot settlement without delegating judgement to multisigs or governance committees, while remaining compatible with optional account-abstraction wallet flows.
 
 Key mechanics for those integrators:
 
 1. **Bounded timers**: performance `D_due`, review `D_rev`, dispute `D_dis` (§2.2, §3.1) map to “work due”, “client confirmation”, “cool-off” messages in the A2A workflow.  
 2. **Symmetric forfeiture (E13 / INV.8)**: when the dispute window lapses unresolved both parties lose the escrow, deterring stalemates without relying on arbiters.  
 3. **Zero protocol fee (§1.3 / INV.14 / MET.5)**: every path keeps `escrow_before = payout + refund`, otherwise `ErrFeeForbidden`, so platforms add fees explicitly at a higher layer.  
-4. **Pull settlement (INV.10)**: state transitions only credit balances; `withdraw` moves funds and carries `nonReentrant`, reducing external attack surface.
+4. **Pull settlement (INV.10)**: state transitions only credit balances; `withdraw` moves funds and carries `nonReentrant`, reducing external attack surface. Optional AA paths can mirror the same semantics.
 
 Lifecycle recap:  
 `Initialized` → (E1) `Executing` → (E3) `Reviewing` → (E4/E9) `Settled` or (E5/E10) `Disputing` → (E12) `Settled` / (E13) `Forfeited`; guarded cancellations (E2/E6/E7/E11) stay available when preconditions fail.
@@ -35,7 +35,7 @@ Lifecycle recap:
 
 **In scope**
 - Single escrow (ETH / ERC-20) for Client → Contractor one-shot deliveries.  
-- Minimal functions / events / errors (§6.1 / §6.2) including 2771/4337 provenance guards (§6.3).  
+- Minimal functions / events / errors (§6.1 / §6.2) with optional 2771/4337 provenance guards (§6.3).  
 - Observability metrics and SLO baseline (§7.1 / §7.2).
 
 **Out of scope**
@@ -85,7 +85,7 @@ extendReview(orderId, newRevSec)
 
 Error set: `ErrInvalidState`, `ErrExpired`, `ErrBadSig`, `ErrOverEscrow`, `ErrFrozen`, `ErrFeeForbidden`, `ErrAssetUnsupported`, `ErrReplay`, `ErrUnauthorized` (§5.2).
 
-2771 / 4337: resolve the business subject `subject` for all guards; write `via` into events (§6.3).
+2771 / 4337 (optional): if a deployment supports trusted forwarding or EntryPoint calls, resolve the business subject `subject` for all guards and write `via` into events (§6.3).
 
 ---
 
@@ -131,7 +131,7 @@ SLO predicate (§7.2): `SLO_T(W) := (MET.5 = 0) ∧ (forfeit_rate ≤ θ) ∧ (a
 ## Compatibility & Extensibility
 
 - Assets: ETH / ERC-20 (native ETH must honour `msg.value`; ERC-20 uses SafeERC20).  
-- Call provenance: direct, trusted forwarder (2771), EntryPoint (4337); multi-hop relays are forbidden.  
+- Call provenance: direct callers by default; deployments MAY enable trusted forwarders (2771) or EntryPoints (4337), in which case multi-hop relays remain forbidden.  
 - Higher layers may add deposits, ratings, multi-milestone flows, provided they respect the core state machine and invariants.
 
 ---
@@ -161,10 +161,10 @@ SLO predicate (§7.2): `SLO_T(W) := (MET.5 = 0) ∧ (forfeit_rate ≤ θ) ∧ (a
 
 1. Collect Magicians feedback, documenting how it differs from prior A2A threads (delegated execution, account-bound agents) and fold accepted changes into `EIP-DRAFT/eip-nesp.md` (Rationale, Security, Open Issues).  
 2. Publish a complementary game-theory note on ethresear.ch (drawing from §9 and §16.3) and cross-link both directions so readers can compare models.  
-3. Work with wallet / marketplace / AA implementers to validate 2771/4337 flows, sample signatures, and event semantics, then publish test harness pointers.  
+3. Work with wallet / marketplace / AA implementers to validate any chosen 2771/4337 flows, sample signatures, and event semantics, then publish test harness pointers.  
 4. Capture recommended reputation / Sybil guardrail patterns in `SPEC/commons` once consensus emerges.
 
 ---
 
 **Abstract**  
-NESP defines a zero-fee, no-arbitration escrow settlement standard with bounded performance/review/dispute windows and symmetric forfeiture. The minimal interface (`createOrder`, `raiseDispute`, `settleWithSigs`, `timeoutForfeit`, etc.), event schema, invariants (`A ≤ E`, zero-fee identity), and AA-friendly provenance rules (2771/4337) are aligned with the SSOT whitepaper. Feedback is requested on timeout outcomes, timer bounds, optional signature fields, observability requirements, multi-agent variants, and recommended reputation / Sybil guardrails before the ERC draft advances.
+NESP defines a zero-fee, no-arbitration escrow settlement standard with bounded performance/review/dispute windows and symmetric forfeiture. The minimal interface (`createOrder`, `raiseDispute`, `settleWithSigs`, `timeoutForfeit`, etc.), event schema, invariants (`A ≤ E`, zero-fee identity), and optional AA-friendly provenance rules (2771/4337) are aligned with the SSOT whitepaper. Feedback is requested on timeout outcomes, timer bounds, optional signature fields, observability requirements, multi-agent variants, and recommended reputation / Sybil guardrails before the ERC draft advances.

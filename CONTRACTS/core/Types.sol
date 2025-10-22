@@ -27,8 +27,9 @@ enum BalanceKind {
 
 /// @notice 结清触发方（用于 Settled 事件）
 enum SettleActor {
-    Client,   // 买方主动验收
-    Timeout   // 超时自动结清
+    Client,      // 买方主动验收（E4/E8）
+    Timeout,     // 超时自动结清（E9）
+    Negotiated   // 签名协商结清（E12）
 }
 
 /// @notice 订单结构体（WP §2.1, §2.2, §2.3）
@@ -55,7 +56,10 @@ struct Order {
 
     // Slot 5: 手续费策略（32 字节）
     address feeHook;     // 手续费 Hook 合约（address(0) 表示无手续费）
-    bytes32 feeCtxHash;  // 手续费上下文哈希（链下存储原始 feeCtx）
+    bytes32 feeCtxHash;  // 手续费上下文哈希（用于 E12 验证）
+
+    // Slot 6+: 手续费上下文（动态长度）
+    bytes feeCtx;        // 手续费上下文原始数据（用于 FeeHook 调用）
 }
 
 /// @notice 手续费策略上下文（链下存储，仅哈希上链）

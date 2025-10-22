@@ -16,7 +16,6 @@ M3 — Reference Implementation (alpha)
 - EIP-712/1271 settlement flow
 
 M4 — Integrations & UX
-- 2771/4337 subject resolution examples
+- Optional 2771/4337 subject resolution examples
 - Gift/top-up semantics, batch ops
 - Observability dashboards (SLO metrics)
-
