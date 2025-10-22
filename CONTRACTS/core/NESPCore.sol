@@ -4,6 +4,8 @@ pragma solidity ^0.8.24;
 import {Order, OrderState, BalanceKind, SettleActor} from "./Types.sol";
 import {IFeeHook} from "../interfaces/IFeeHook.sol";
 import {INESPEvents} from "../interfaces/INESPEvents.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
  * @title NESPCore
@@ -31,6 +33,12 @@ import {INESPEvents} from "../interfaces/INESPEvents.sol";
  * E13: Disputing → Forfeited     (timeoutForfeit)
  */
 contract NESPCore is INESPEvents {
+    // ============================================
+    // 库使用
+    // ============================================
+
+    using SafeERC20 for IERC20;
+
     // ============================================
     // 常量
     // ============================================
@@ -260,9 +268,16 @@ contract NESPCore is INESPEvents {
             // ETH
             require(msg.value == amount, "ETH mismatch");
         } else {
-            // ERC-20（简化版本，生产环境需使用 SafeERC20）
+            // ERC-20
             require(msg.value == 0, "No ETH for ERC20");
-            // TODO: SafeERC20.safeTransferFrom(IERC20(order.tokenAddr), from, address(this), amount);
+
+            // 余额差核验（INV.7：防止手续费代币攻击）
+            uint256 balanceBefore = IERC20(order.tokenAddr).balanceOf(address(this));
+            IERC20(order.tokenAddr).safeTransferFrom(from, address(this), amount);
+            uint256 balanceAfter = IERC20(order.tokenAddr).balanceOf(address(this));
+
+            // 验证实际到账金额（防止通缩代币/手续费代币）
+            require(balanceAfter - balanceBefore == amount, "Transfer amount mismatch");
         }
 
         // Effects：单调增加托管额
@@ -758,8 +773,8 @@ contract NESPCore is INESPEvents {
             (bool success, ) = msg.sender.call{value: amount}("");
             require(success, "ETH transfer failed");
         } else {
-            // ERC-20（简化版本，生产环境需使用 SafeERC20）
-            // TODO: SafeERC20.safeTransfer(IERC20(tokenAddr), msg.sender, amount);
+            // ERC-20
+            IERC20(tokenAddr).safeTransfer(msg.sender, amount);
         }
 
         // 触发事件
@@ -794,7 +809,7 @@ contract NESPCore is INESPEvents {
             require(success, "ETH transfer failed");
         } else {
             // ERC-20
-            // TODO: SafeERC20.safeTransfer(IERC20(tokenAddr), to, amount);
+            IERC20(tokenAddr).safeTransfer(to, amount);
         }
 
         // 触发事件
