@@ -74,9 +74,9 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 - 建议：支持“WETH 适配层”作为工程选项，但规范层必须支持原生 ETH。
 
 ### 2.6 参数协商与范围（规范）
-- 协商主体与生效时点：`E`、`D_due`、`D_rev`、`D_dis` 由 Client 与 Contractor 针对“每一笔订单”达成一致；实现必须在订单建立/接受时固化存储。订单在创建时固化手续费参数 `feeRecipient` 与 `feeBps`（基点，1/10_000）；当部署启用“费用验证器”（MAY）且 `feeRecipient != 0 ∧ feeBps > 0` 时，创建期须通过只读有效性校验；一旦固化，不可修改。约定：当 `feeRecipient = address(0)` 或 `feeBps = 0` 时表示不计费，可跳过验证器校验。
+ - 协商主体与生效时点：`E`、`D_due`、`D_rev`、`D_dis` 由 Client 与 Contractor 针对“每一笔订单”达成一致；实现必须在订单建立/接受时固化存储。订单在创建时固化手续费参数 `feeRecipient` 与 `feeBps`（基点，1/10_000）；当 `feeRecipient != 0 ∧ feeBps > 0` 时，创建期 MUST 通过“唯一全局验证器”的只读有效性校验；一旦固化，不可修改。约定：当 `feeRecipient = address(0)` 或 `feeBps = 0` 时表示不计费，可跳过验证器校验。
   - 上限：`feeBps ≤ 10_000`（MUST）。
-  - 失败语义：当启用验证器且 `feeRecipient != 0 ∧ feeBps > 0` 时，如验证器地址未设置或 `validate(...)` 返回 `false`，创建入口 MUST `revert`（错误命名示例化，语义须一致）。
+  - 失败语义：当 `feeRecipient != 0 ∧ feeBps > 0` 时，如验证器地址未设置（零地址）或 `validate(...)` 返回 `false`，创建入口 MUST `revert`（错误命名示例化，语义须一致）。
 - 默认值：若 `dueSec/revSec/disSec` 传入 0，则采用协议默认 `D_due=1d=86_400s`、`D_rev=1d=86_400s`、`D_dis=7d=604_800s`；入库与事件需记录替换后的“生效值”。
 - 修改规则：`E` 仅可单调增加；`D_due/D_rev` 仅允许在争议发生前单调延后；`D_dis` 自设置后固定，不提供延长入口。
 - 有界性：三者必须为有限值且大于 0；为抵御重组，`D_dis ≥ 2·T_reorg`（由部署方按目标链给出估计）。
@@ -205,6 +205,7 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
   - G.E12 `settleWithSigs`：
     - Condition：`state = Disputing`，`now < disputeStart + D_dis`，`amountToSeller ≤ escrow`，并通过 EIP‑712/1271 签名、`nonce`、`deadline` 校验。
     - Subject：`client` 或 `contractor`。
+    - Nonce 消费（MUST）：消费提议方 `proposer` 的 `nonces[orderId][proposer] += 1`；接受方 `acceptor` 不强制消费其 nonce（实现 MAY 额外维护）。
     - Effects：按签名金额结清（`amountToSeller = A`），分别记账至卖方（Payout=A）与买方退款（Refund=escrow−A），订单 `escrow` 清零，状态转入 Settled。
     - Failure：条件未满足 MUST `revert`（`ErrBadSig/ErrReplay/ErrExpired/ErrOverEscrow` 等）。
   - G.E13 `timeoutForfeit`：
@@ -353,10 +354,10 @@ function _safeTransferIn(token, subject, amount) internal {
 （信息性）证据承诺为可选扩展（NESP‑EVC：Evidence Commitments）；可在应用层增加扩展接口与合约实现，内核不强制，且不纳入本规范评审。
 
 ### 6.1 函数（最小集）
-- `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, feeRecipient, feeBps)`：创建订单，固化资产/时间锚点与手续费参数（`feeRecipient=address(0)` 或 `feeBps=0` 表示不计费；当部署启用“费用验证器”（MAY）且二者均非零时，须通过只读校验）。
+- `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, feeRecipient, feeBps)`：创建订单，固化资产/时间锚点与手续费参数（`feeRecipient=address(0)` 或 `feeBps=0` 表示不计费；当二者均非零时，创建期 MUST 通过“唯一全局验证器”只读校验）。
 - `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, feeRecipient, feeBps, amount)`（payable） ：创建并立即充值指定金额（ETH：`msg.value == amount`；ERC‑20：`SafeERC20.safeTransferFrom(subject, this, amount)`）。
   - Failure（两入口共通）：
-    - 当启用费用验证器且 `feeRecipient != 0 ∧ feeBps > 0` 时，如验证器地址未设置或 `validate(...)` 返回 `false`，MUST `revert`（错误命名示例化）。
+    - 当 `feeRecipient != 0 ∧ feeBps > 0` 时，如验证器地址未设置（零地址）或 `validate(...)` 返回 `false`，MUST `revert`（错误命名示例化）。
     - 当 `feeBps > 10_000`，MUST `revert`（建议错误名：`ErrFeeBpsTooHigh`）。
 - `depositEscrow(orderId, amount)`（payable）：补充托管额，允许 client 或第三方赠与；入口遵守资产与冻结守卫。触发事件：`EscrowDeposited`。
 - `acceptOrder(orderId)`：承接订单，需 `subject == contractor`，并设置 `startTime`。触发事件：`Accepted`。
@@ -544,8 +545,8 @@ function _safeTransferIn(token, subject, amount) internal {
 - 接口/事件/错误：采用第 6 章最小充分集。
 - 签名域绑定：订单/资产/数额/截止/链标识/随机数；跨单/跨链/过期/域错路径测试。
   - Nonce 存储与消费（MUST）：
-    - 存储结构：`mapping(uint256 => mapping(address => uint256)) nonces`（作用域：`{orderId, signer}`）。
-    - 校验与消费：在签名入口（如 `settleWithSigs`）校验 `nonce == nonces[orderId][signer]` 成立后，消费一次 `nonces[orderId][signer]++`；旧签名在消费后失效。
+    - 存储结构：`mapping(uint256 => mapping(address => uint256)) nonces`（作用域：`{orderId, proposer}`）。
+    - 校验与消费：在签名入口（如 `settleWithSigs`）校验 `nonce == nonces[orderId][proposer]` 成立后，消费一次 `nonces[orderId][proposer]++`；旧签名在消费后失效。实现 MAY 额外维护 `acceptor` 侧的 nonce，但非必须。
 - Pull/CEI/授权/重入：提现前清零、`nonReentrant`、授权校验与来源记录。
 - 非标资产：由适配层与白名单策略（信息性，MAY）处理；异常资产路径显式失败。资产策略钩子的参考配置见附录 §16.6（信息性）。
 - 治理提款：实现 `forfeitBalance` 记账、`onlyGovernance` 守卫、CEI 顺序与 `nonReentrant`、ETH/ERC‑20 余额差核验；失败路径返回自定义错误（如 `ErrUnauthorized/ErrInsufficientForfeit`）。
