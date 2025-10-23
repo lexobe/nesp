@@ -340,7 +340,7 @@ function _safeTransferIn(token, subject, amount) internal {
    - Effects：`forfeitBalance[tokenAddr] -= amount`；将资产转给 `to`；ETH 使用 `call{value:amount}`，ERC‑20 使用 `SafeERC20.safeTransfer`。
    - Failure：MUST `revert`（`ErrUnauthorized/ErrAmountZero/ErrInsufficientForfeit` 等）。上述错误命名为示例，实施可采用等价错误名，但语义与守卫必须一致。
 - （治理接口）`setFeeValidator(validator)`：设置“唯一全局验证器”地址（仅影响新创建订单）。
-  - Condition：`onlyGovernance`。
+  - Condition：`onlyGovernance`；`validator` 可为 `address(0)`（允许“无验证器”部署；当 `validator==0 ∧ feeRecipient!=0 ∧ feeBps>0` 时，创建期按 §2.6 的失败语义 MUST `revert`）。
   - Subject：治理模块地址。
   - Effects：更新全局验证器地址；对已存在订单无影响；验证器必须为只读合约（见 §12.1）。调用成功 MUST 触发事件 `FeeValidatorUpdated(prev, next)`。
   - Failure：MUST `revert`（`ErrUnauthorized` 等）。
@@ -515,7 +515,7 @@ function _safeTransferIn(token, subject, amount) internal {
 
 - 全局验证器（FeeValidator）约束（规范）
   - 接口签名：`validate(address feeRecipient, uint16 feeBps) external view returns (bool ok)`。
-  - 只读：MUST 为 `view` 且不得修改任何链上状态；建议 Gas 上限 ≤ 50,000。
+  - 只读：MUST 为 `view` 且不得修改任何链上状态；SHOULD 将 Gas 上限控制在 ≤ 50,000（建议/信息性）。
   - 失败语义：当 `feeRecipient != 0 && feeBps > 0` 时，若验证器未设置（零地址）或返回 `false`，创建入口 MUST `revert`（建议错误名：`ErrFeeValidatorUnset/ErrFeeValidationFailed`）。
   - 上限约束：硬上限 `feeBps ≤ 10_000`（超过 MUST `revert`，建议错误名：`ErrFeeBpsTooHigh`）。
   - 生效范围：验证器的更换仅影响新订单；不改变任何已固化订单。
