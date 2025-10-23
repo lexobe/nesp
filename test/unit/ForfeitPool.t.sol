@@ -136,12 +136,10 @@ contract ForfeitPoolTest is BaseTest {
 
         // governance 提现
         uint256 balanceBefore = governance.balance;
-
-        // Debug: print addresses
-        console2.log("BaseTest.governance:", governance);
+        uint256 forfeitAmount = core.forfeitBalance(address(0));
 
         vm.prank(governance);
-        core.withdrawForfeit(address(0), governance, core.forfeitBalance(address(0)));
+        core.withdrawForfeit(address(0), governance, forfeitAmount);
 
         // 验证提现成功
         assertEq(governance.balance, balanceBefore + ESCROW_AMOUNT, "Governance should receive forfeited funds");
@@ -167,6 +165,7 @@ contract ForfeitPoolTest is BaseTest {
 
         // 尝试提现 0 金额应该 revert
         vm.expectRevert(NESPCore.ErrZeroAmount.selector);
+        vm.prank(governance);
         core.withdrawForfeit(address(0), governance, 0);  // Explicit 0 amount
     }
 
@@ -187,12 +186,15 @@ contract ForfeitPoolTest is BaseTest {
 
         // 第一次提现
         uint256 balanceBefore = governance.balance;
-        core.withdrawForfeit(address(0), governance, core.forfeitBalance(address(0)));
+        uint256 forfeitAmount = core.forfeitBalance(address(0));
+        vm.prank(governance);
+        core.withdrawForfeit(address(0), governance, forfeitAmount);
         assertEq(governance.balance, balanceBefore + ESCROW_AMOUNT, "First withdraw should succeed");
         assertEq(core.forfeitBalance(address(0)), 0, "Pool should be empty");
 
         // 第二次提现应该 revert（balance = 0, 所以会触发 ErrZeroAmount)
         vm.expectRevert(NESPCore.ErrZeroAmount.selector);
+        vm.prank(governance);
         core.withdrawForfeit(address(0), governance, 0);  // Can only pass 0 now
     }
 

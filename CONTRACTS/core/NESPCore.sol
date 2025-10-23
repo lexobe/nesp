@@ -263,14 +263,22 @@ contract NESPCore is INESPEvents {
         if (order.state != OrderState.Disputing) revert ErrInvalidState();
         if (block.timestamp > deadline) revert ErrExpired();
         if (amountToSeller > order.escrow) revert ErrOverEscrow();
-        bool okPair = (proposer == order.client && acceptor == order.contractor) ||
-            (proposer == order.contractor && acceptor == order.client);
-        if (!okPair) revert ErrUnauthorized();
+
+        // Verify proposer/acceptor are client/contractor (in any order)
+        if (!((proposer == order.client && acceptor == order.contractor) ||
+              (proposer == order.contractor && acceptor == order.client))) {
+            revert ErrUnauthorized();
+        }
+
+        // Verify and consume nonce
         if (nonces[orderId][proposer] != nonce) revert ErrReplay();
         nonces[orderId][proposer]++;
 
-        bytes32 structHash = keccak256(
-            abi.encode(
+        // Verify signatures
+        bytes32 digest = keccak256(abi.encodePacked(
+            "\x19\x01",
+            DOMAIN_SEPARATOR,
+            keccak256(abi.encode(
                 SETTLEMENT_TYPEHASH,
                 orderId,
                 order.tokenAddr,
@@ -279,13 +287,16 @@ contract NESPCore is INESPEvents {
                 acceptor,
                 nonce,
                 deadline
-            )
-        );
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+            ))
+        ));
+
         if (!_verifySignature(digest, proposerSig, proposer)) revert ErrBadSig();
         if (!_verifySignature(digest, acceptorSig, acceptor)) revert ErrBadSig();
-        _settle(orderId, amountToSeller, SettleActor.Negotiated);
+
+        // Emit before settlement to avoid stack issues
         emit AmountSettled(orderId, proposer, acceptor, amountToSeller, nonce);
+
+        _settle(orderId, amountToSeller, SettleActor.Negotiated);
     }
 
     function timeoutForfeit(uint256 orderId) external nonReentrant {
@@ -344,17 +355,7 @@ contract NESPCore is INESPEvents {
     }
 
     function setFeeValidator(address validator) external {
-        // NOTE: Governance check DISABLED due to via-IR + vm.prank() compiler bug
-        // See GOVERNANCE_BUG_ANALYSIS.md for details
-        // In production deployment (without vm.prank), this check MUST be enabled
-        // TODO: Re-enable when either:
-        //   1. via-IR bug is fixed, OR
-        //   2. Stack-too-deep is resolved without via-IR
-        //
-        // PRODUCTION CODE (commented out):
-        // if (msg.sender != governance) revert ErrUnauthorized();
-
-        // WP §4.2: validator != address(0)
+        if (msg.sender != governance) revert ErrUnauthorized();
         if (validator == address(0)) revert ErrZeroAddress();
 
         address prev = feeValidator;
@@ -363,13 +364,7 @@ contract NESPCore is INESPEvents {
     }
 
     function withdrawForfeit(address tokenAddr, address to, uint256 amount) external nonReentrant {
-        // NOTE: Governance check DISABLED due to via-IR + vm.prank() compiler bug
-        // See GOVERNANCE_BUG_ANALYSIS.md for details
-        // In production deployment (without vm.prank), this check MUST be enabled
-        //
-        // PRODUCTION CODE (commented out):
-        // if (msg.sender != governance) revert ErrUnauthorized();
-
+        if (msg.sender != governance) revert ErrUnauthorized();
         if (amount == 0) revert ErrZeroAmount();
         if (amount > forfeitBalance[tokenAddr]) revert ErrInsufficientForfeit();
         forfeitBalance[tokenAddr] -= amount;

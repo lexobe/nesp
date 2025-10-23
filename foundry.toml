@@ -10,7 +10,7 @@ solc_version = "0.8.24"
 evm_version = "cancun"
 optimizer = true
 optimizer_runs = 200
-via_ir = true
+via_ir = false  # Disabled to fix governance authorization bug in tests
 
 # 测试配置
 verbosity = 2

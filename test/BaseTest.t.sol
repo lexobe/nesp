@@ -79,8 +79,9 @@ contract BaseTest is Test {
         vm.label(thirdParty, "ThirdParty");
 
         // 设置全局验证器（始终通过）以便带手续费用例
+        AlwaysYesValidator validator = new AlwaysYesValidator();
         vm.prank(governance);
-        core.setFeeValidator(address(new AlwaysYesValidator()));
+        core.setFeeValidator(address(validator));
     }
 
     // ============================================
