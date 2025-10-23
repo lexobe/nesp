@@ -366,21 +366,24 @@ function _safeTransferIn(token, subject, amount) internal {
  - `FeeValidatorUpdated(prev, next)`：全局验证器更新时触发，仅影响后续新订单的创建期校验；不改变任何既有订单。
 - 说明：事件不携带显式 `ts` 字段，默认以日志对应区块的 `block.timestamp` 作为时间锚点。
 
-### 6.3 授权与来源（可选受信路径）
-- 默认情形 `EscrowDeposited.via = address(0)`，表示直接调用（`msg.sender == tx.origin`）。若部署开启受信路径（如 2771 转发或 4337 EntryPoint），`via` 记录该受信合约地址。
-- 需提前登记受信转发器/EntryPoint，并在链上校验：2771 模式下 `isTrustedForwarder(via)=true`；4337 模式下 `via` 必须等于配置的 `EntryPoint`。
-- 例外与说明：本节的受信路径约束不适用于 `depositEscrow`（该入口 permissionless，允许任意地址调用；`via` 仅作审计记录，不作为授权判据）。
-- 其他合约调用（除 `depositEscrow` 外的状态变更入口）MUST `revert`（ErrUnauthorized）。不支持多重转发/嵌套；检测到多跳 MUST `revert`。授权失败为回滚路径，不发 `EscrowDeposited` 事件。
+### 6.3 授权与来源（主体解析与审计）
+- 规范目的（信息性）：本节仅定义“如何解析动作主体 subject 与记录来源 via”，用于审计与重放；是否信任第三方合约由用户自行授权，NESP 内核不对白名单/provider 做裁量或限制。
+- MUST 支持的主体解析：
+  - 直连/合约钱包：`subject = msg.sender`，`via = address(0)`。
+  - ERC‑4337：若 `msg.sender == EntryPoint`，`subject = userOp.sender`，`via = EntryPoint`。
+- MAY 支持的主体解析：
+  - EIP‑2771（受信转发）：若实现选择支持，`subject = _msgSender()`，`via = forwarder`。是否登记 forwarder 属部署/实现细则，不构成规范性限制；实现应保证可重放与可审计。
+  - 元交易签名：对需主体守卫的入口可提供 EIP‑712/1271 签名变体，任何地址可提交；核心仅验签与防重放；事件记录 `via` 以便审计（应用层可自行选择是否采用该路径）。
+- `depositEscrow` 始终为 permissionless；`via` 仅用于审计与归因，不作为授权判据。
+- 当无法按上述规则确定 `subject` 时，所有需主体守卫的入口 MUST `revert`（`ErrUnauthorized`）；授权失败为回滚路径，不触发对应事件。
 
-#### 定义与可观测锚点（补充，不改变语义）
-- “多跳（multi‑hop）”界定：在同一笔调用中，经由多个转发/中继合约层层转发至本合约的情形（除受信任的 `forwarder` 或配置的 `EntryPoint` 之外的额外一跳及以上），均视为“多跳”。
-- 判定口径：若 `msg.sender` 为合约地址，且既不是受信任的 `forwarder` 也不是配置的 `EntryPoint`，则视为未授权；若检测到“多跳”链路，MUST `revert`（`ErrUnauthorized`）。
-- 可选工件（建议）：
-  - 自定义错误签名：`ErrUnauthorized()`（或 `ErrUnauthorized(address caller, address via)`）；
-  - 事件主题示例：`EscrowDeposited(uint256 orderId, address from, uint256 amount, uint256 newEscrow, address via)` 的主题 `keccak256` 值；外部审计据此核对“未发事件”。
+#### 审计建议（信息性）
+- 可选工件：
+  - 自定义错误签名：`ErrUnauthorized()`（或 `ErrUnauthorized(address caller, address via)`）。
+  - 事件主题示例：`EscrowDeposited(uint256 orderId, address from, uint256 amount, uint256 newEscrow, address via)` 的主题 `keccak256` 值，供外部审计核对“未发事件”。
 
 （治理接口调用来源说明，补充，不改变语义）
-- 治理接口（如 `withdrawForfeit`）不适用本节“受信路径”规则；必须由治理主体地址直接调用（判定口径：`msg.sender == governance`；若治理主体为合约，任何以该合约地址为 `msg.sender` 的内部模块/代理/委托调用均视为直接调用）；检测到经由未授权的转发/多跳调用时 MUST `revert`（`ErrUnauthorized`）。
+- 治理接口（如 `withdrawForfeit`）不适用转发/多跳；必须由治理主体地址直接调用（判定口径：`msg.sender == governance`；若治理主体为合约，任何以该合约地址为 `msg.sender` 的内部模块/代理/委托调用均视为直接调用）。
 
 
 ## 7. 可观测性与 SLO（公共审计）
