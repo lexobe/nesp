@@ -156,7 +156,7 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
   - G.E10 `raiseDispute`（评审阶段）：
     - Condition：`state = Reviewing` 且 `now < readyAt + D_rev`。
     - Subject：`client` 或 `contractor`。
-    - Effects：状态转入 Disputing，保持 `disputeStart = now`（若首次进入）并冻结托管额。
+    - Effects：状态转入 Disputing，设置 `disputeStart = now`（锚点一次性），并冻结托管额。
     - Failure：条件未满足 MUST `revert`。
   - G.E6 `cancelOrder`（client）：
     - Condition：`state = Executing`、`readyAt` 未设置，且 `now ≥ startTime + D_due`。
@@ -256,7 +256,7 @@ function _safeTransferIn(token, subject, amount) internal {
 ## 5. 安全与威胁模型
 
 ### 5.1 签名与重放
-- 采用 EIP‑712/1271；签名域至少包含 `{chainId, contract, orderId, tokenAddr, amountToSeller(=A), proposer, acceptor, nonce, deadline}`。
+- 采用 EIP‑712/1271；Domain 至少包含 `{chainId, verifyingContract}`；消息结构（Settlement）至少包含 `{orderId, tokenAddr, amountToSeller(=A), proposer, acceptor, nonce, deadline}`。
 - `amountToSeller ≤ E`；`nonce` 的作用域至少为 `{orderId, signer}` 且一次性消费；`deadline` 基于 `block.timestamp` 判定。
 - 必须防止跨订单/跨合约/跨链重放。
 
@@ -330,7 +330,7 @@ function _safeTransferIn(token, subject, amount) internal {
 - `timeoutSettle(orderId)`：在评审超时后由任意主体触发全额结清。触发事件：`Settled(actor=Timeout)` 与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账；手续费按已固化参数内联计算，费用计算遵循 `INV.14` 的 `floor` 规则。
 - `raiseDispute(orderId)`：进入争议状态，`subject ∈ {client, contractor}`，记录 `disputeStart`。触发事件：`DisputeRaised`。
 - `settleWithSigs(orderId, payload, sig1, sig2)`：争议期内按签名报文结清金额 A（守卫 `A ≤ escrow`）。触发事件：`AmountSettled` 与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账（终态为 `Settled`）；手续费按已固化参数内联计算，费用计算遵循 `INV.14` 的 `floor` 规则。
-  - 说明：`payload` 为 EIP‑712 TypedData（见 §5.1），最小字段集合：`{chainId, contract, orderId, tokenAddr, amountToSeller(=A), proposer, acceptor, nonce, deadline}`；签名校验与防重放口径同 §5.1。
+  - 说明：`payload` 为 EIP‑712 TypedData（见 §5.1）；消息体至少包含 `{orderId, tokenAddr, amountToSeller(=A), proposer, acceptor, nonce, deadline}`，Domain 至少包含 `{chainId, verifyingContract}`；签名校验与防重放口径同 §5.1。
 - `timeoutForfeit(orderId)`：争议超时由任意主体触发对称没收。触发事件：`Forfeited(orderId, tokenAddr, amount)`。
 - `cancelOrder(orderId)`：根据守卫（G.E6/G.E7/G.E11）由 client 或 contractor 取消订单。触发事件：`Cancelled`，与后续 `BalanceCredited（kind=Refund）` 记账。
 - `withdraw(tokenAddr)`：提取累计收益或退款（Pull 语义，`nonReentrant`）；成功时触发 `BalanceWithdrawn` 事件。
@@ -348,6 +348,11 @@ function _safeTransferIn(token, subject, amount) internal {
 - `withdrawableOf(tokenAddr, account) view`：读取聚合可提余额（涵盖 Payout/Refund/Fee），便于钱包等组件展示与核对。
 - `extendDue(orderId, newDueSec)`：client 单调延长履约窗口。触发事件：`DueExtended`（记录 old/new）。
 - `extendReview(orderId, newRevSec)`：contractor 单调延长评审窗口。触发事件：`ReviewExtended`（记录 old/new）。
+
+（验证器错误语义汇总，信息性）
+- 当 `feeRecipient != 0 ∧ feeBps > 0` 且验证器地址未设置（零地址）时：MUST `revert`（建议错误名：`ErrFeeValidatorUnset`）。
+- 当 `feeRecipient != 0 ∧ feeBps > 0` 且验证器 `validate(...)` 返回 `false` 时：MUST `revert`（建议错误名：`ErrFeeValidationFailed`）。
+- 当 `feeBps > 10_000` 时：MUST `revert`（建议错误名：`ErrFeeBpsTooHigh`）。
 
 ### 6.2 事件（最小字段）
 - `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, feeRecipient, feeBps)`：订单建立时触发，固化角色、时间参数与手续费参数（`feeRecipient=address(0)` 或 `feeBps=0` 表示不计费）。事件的 `block.timestamp` 视为 `startTime` 候选锚点。
@@ -367,6 +372,7 @@ function _safeTransferIn(token, subject, amount) internal {
  - `ProtocolFeeWithdrawn(tokenAddr, to, amount, actor)`：治理提款成功时触发；`actor` 为治理调用者。
  - `FeeValidatorUpdated(prev, next)`：全局验证器更新时触发，仅影响后续新订单的创建期校验；不改变任何既有订单。
 - 说明：事件不携带显式 `ts` 字段，默认以日志对应区块的 `block.timestamp` 作为时间锚点。
+ - 事件 `via` 覆盖说明：最小事件集中仅 `EscrowDeposited` 携带 `via` 字段；其他状态变更事件不包含 `via`。实现者 MAY 增加审计型事件或扩展字段，但不得改变事件的最小充分语义与可重放性。
 
 ### 6.3 授权与来源（主体解析与审计）
 - 规范目的（信息性）：本节仅定义“如何解析动作主体 subject 与记录来源 via”，用于审计与重放；是否信任第三方合约由用户自行授权，NESP 内核不对白名单/provider 做裁量或限制。
@@ -375,7 +381,7 @@ function _safeTransferIn(token, subject, amount) internal {
   - ERC‑4337：若 `msg.sender == EntryPoint`，`subject = userOp.sender`，`via = EntryPoint`。
 - MAY 支持的主体解析：
   - EIP‑2771（受信转发）：若实现选择支持，`subject = _msgSender()`，`via = forwarder`。是否登记 forwarder 属部署/实现细则，不构成规范性限制；实现应保证可重放与可审计。
-  - 元交易签名：对需主体守卫的入口可提供 EIP‑712/1271 签名变体，任何地址可提交；核心仅验签与防重放；事件记录 `via` 以便审计（应用层可自行选择是否采用该路径）。
+  - 元交易签名：对需主体守卫的入口可提供 EIP‑712/1271 签名变体，任何地址可提交；核心仅验签与防重放；实现 MAY 记录 `via` 以便审计（最小事件集不要求在除 `EscrowDeposited` 外的事件中携带 `via`）。
 - `depositEscrow` 始终为 permissionless；`via` 仅用于审计与归因，不作为授权判据。
 - 当无法按上述规则确定 `subject` 时，所有需主体守卫的入口 MUST `revert`（`ErrUnauthorized`）；授权失败为回滚路径，不触发对应事件。
 
