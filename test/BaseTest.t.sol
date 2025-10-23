@@ -2,10 +2,10 @@
 pragma solidity ^0.8.24;
 
 import {Test, console2} from "forge-std/Test.sol";
-import {NESPCore} from "../contracts/core/NESPCore.sol";
-import {Order, OrderState} from "../contracts/core/Types.sol";
-import {SimpleFeeHook} from "../contracts/mocks/SimpleFeeHook.sol";
-import {MockERC20} from "../contracts/mocks/MockERC20.sol";
+import {NESPCore} from "../CONTRACTS/core/NESPCore.sol";
+import {Order, OrderState} from "../CONTRACTS/core/Types.sol";
+import {MockERC20} from "../CONTRACTS/mocks/MockERC20.sol";
+import {AlwaysYesValidator} from "../CONTRACTS/mocks/AlwaysYesValidator.sol";
 
 /**
  * @title BaseTest
@@ -17,7 +17,6 @@ contract BaseTest is Test {
     // ============================================
 
     NESPCore public core;
-    SimpleFeeHook public feeHook;
     MockERC20 public token;
 
     // ============================================
@@ -63,7 +62,6 @@ contract BaseTest is Test {
 
         // 部署合约
         core = new NESPCore(governance);
-        feeHook = new SimpleFeeHook(provider, FEE_BPS);
         token = new MockERC20("Test Token", "TEST");
 
         // 给账户分配 ERC20 代币
@@ -73,13 +71,16 @@ contract BaseTest is Test {
 
         // 标记合约地址（便于追踪）
         vm.label(address(core), "NESPCore");
-        vm.label(address(feeHook), "SimpleFeeHook");
         vm.label(address(token), "MockERC20");
         vm.label(governance, "Governance");
         vm.label(client, "Client");
         vm.label(contractor, "Contractor");
         vm.label(provider, "Provider");
         vm.label(thirdParty, "ThirdParty");
+
+        // 设置全局验证器（始终通过）以便带手续费用例
+        vm.prank(governance);
+        core.setFeeValidator(address(new AlwaysYesValidator()));
     }
 
     // ============================================
@@ -97,8 +98,8 @@ contract BaseTest is Test {
             0, // 使用默认 dueSec
             0, // 使用默认 revSec
             0, // 使用默认 disSec
-            address(0), // 无手续费
-            "" // 空 feeCtx
+            address(0), // feeRecipient
+            0 // feeBps
         );
     }
 
@@ -113,8 +114,8 @@ contract BaseTest is Test {
             DUE_SEC,
             REV_SEC,
             DIS_SEC,
-            address(feeHook),
-            "" // feeCtx（SimpleFeeHook 不使用）
+            provider,
+            uint16(FEE_BPS)
         );
     }
 
@@ -129,8 +130,8 @@ contract BaseTest is Test {
             0, // 使用默认值
             0,
             0,
-            address(0), // 无手续费
-            ""
+            address(0),
+            0
         );
     }
 
@@ -145,8 +146,8 @@ contract BaseTest is Test {
             DUE_SEC,
             REV_SEC,
             DIS_SEC,
-            address(feeHook),
-            ""
+            provider,
+            uint16(FEE_BPS)
         );
     }
 
@@ -161,8 +162,8 @@ contract BaseTest is Test {
             DUE_SEC,
             REV_SEC,
             DIS_SEC,
-            address(0), // 无手续费
-            "",
+            address(0),
+            0,
             amount
         );
     }
@@ -183,8 +184,8 @@ contract BaseTest is Test {
             DUE_SEC,
             REV_SEC,
             DIS_SEC,
-            address(0), // 无手续费
-            "",
+            address(0),
+            0,
             amount
         );
     }

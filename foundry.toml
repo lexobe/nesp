@@ -1,5 +1,5 @@
 [profile.default]
-src = "contracts"
+src = "CONTRACTS"
 out = "out"
 libs = ["lib"]
 test = "test"
@@ -10,7 +10,7 @@ solc_version = "0.8.24"
 evm_version = "cancun"
 optimizer = true
 optimizer_runs = 200
-via_ir = false
+via_ir = true
 
 # 测试配置
 verbosity = 2

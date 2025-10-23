@@ -294,7 +294,7 @@ function _safeTransferIn(token, subject, amount) internal {
 
 ### 5.1 签名与重放
 - 采用 EIP‑712/1271；Domain 至少包含 `{chainId, verifyingContract}`；消息结构（Settlement）至少包含 `{orderId, tokenAddr, amountToSeller(=A), proposer, acceptor, nonce, deadline}`。
-- `amountToSeller ≤ E`；`nonce` 的作用域至少为 `{orderId, signer}` 且一次性消费；`deadline` 基于 `block.timestamp` 判定。
+- `amountToSeller ≤ E`；`nonce` 的作用域为 `{orderId, proposer}` 且一次性消费；`deadline` 基于 `block.timestamp` 判定（消费规则参见 §3.3 G.E12 与 §12.1：proposer 必须消费，acceptor 可选）。
 - 必须防止跨订单/跨合约/跨链重放。
 
 （信息性）EIP‑712 TypedData 样例（摘录）
@@ -375,7 +375,11 @@ function _safeTransferIn(token, subject, amount) internal {
    - Subject：治理模块地址。
    - Effects：`forfeitBalance[tokenAddr] -= amount`；将资产转给 `to`；ETH 使用 `call{value:amount}`，ERC‑20 使用 `SafeERC20.safeTransfer`。
    - Failure：MUST `revert`（`ErrUnauthorized/ErrAmountZero/ErrInsufficientForfeit` 等）。上述错误命名为示例，实施可采用等价错误名，但语义与守卫必须一致。
-- （治理接口）费用验证器与资产策略的 setter、更新事件等参考配置，见附录 §16.6/§16.7（信息性）。
+- （治理接口）`setFeeValidator(validator)`：设置全局费用验证器地址（仅影响新创建订单）。
+  - Condition：`onlyGovernance` 且 `validator != address(0)`。
+  - Subject：治理模块地址。
+  - Effects：更新全局验证器地址；对已存在订单无影响（仅影响新订单，不回溯）；验证器必须为只读合约（见 §12.1）。调用成功 MUST 触发事件 `FeeValidatorUpdated(prev, next)`。
+  - Failure：MUST `revert`（`ErrUnauthorized/ErrZeroAddress` 等）。
 - `getOrder(orderId) view`：只读查询并返回 `{client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart, feeRecipient, feeBps}`。
 - `withdrawableOf(tokenAddr, account) view`：读取聚合可提余额（涵盖 Payout/Refund/Fee），便于钱包等组件展示与核对。
 - `extendDue(orderId, newDueSec)`：client 单调延长履约窗口。触发事件：`DueExtended`（记录 old/new）。
@@ -399,7 +403,7 @@ function _safeTransferIn(token, subject, amount) internal {
  - `BalanceCredited(orderId, to, tokenAddr, amount, kind)`（`kind ∈ {Payout, Refund, Fee}`）：结清/退款/手续费记账到可提余额时触发（`kind=Fee` 的金额为 0 时可不发事件）。
  - `BalanceWithdrawn(to, tokenAddr, amount)`：用户提现成功时触发。
  - `ProtocolFeeWithdrawn(tokenAddr, to, amount, actor)`：治理提款成功时触发；`actor` 为治理调用者。
- - 费用验证器与资产策略更新类事件：见附录 §16.6/§16.7（信息性）。
+- `FeeValidatorUpdated(prev, next)`：全局费用验证器更新时触发，仅影响后续新订单的创建期校验；不改变任何既有订单。
 - 说明：事件不携带显式 `ts` 字段，默认以日志对应区块的 `block.timestamp` 作为时间锚点。
  - 事件 `via` 覆盖说明：最小事件集中仅 `EscrowDeposited` 携带 `via` 字段；其他状态变更事件不包含 `via`。实现者 MAY 增加审计型事件或扩展字段，但不得改变事件的最小充分语义与可重放性。
 
@@ -552,7 +556,7 @@ function _safeTransferIn(token, subject, amount) internal {
 - 治理提款：实现 `forfeitBalance` 记账、`onlyGovernance` 守卫、CEI 顺序与 `nonReentrant`、ETH/ERC‑20 余额差核验；失败路径返回自定义错误（如 `ErrUnauthorized/ErrInsufficientForfeit`）。
  - 手续费参数（创建期校验 + 结清内联计算）：
   - 存储：订单在创建时固化 `feeRecipient` 与 `feeBps`（`feeRecipient=0` 或 `feeBps=0` 表示不计费）。
-  - 校验：当部署启用费用验证器（MAY）且 `feeRecipient != 0 ∧ feeBps > 0` 时，创建期进行只读有效性校验；已固化订单在运行期不再依赖验证器。参考实现见附录 §16.7（信息性）。
+  - 校验：当 `feeRecipient != 0 ∧ feeBps > 0` 时，创建期 MUST 通过“唯一全局验证器”的只读有效性校验；已固化订单在运行期不再依赖验证器。参考实现见附录 §16.7（信息性）。
   - 计算：结清时按 `fee = floor(A * feeBps / 10_000)` 内联计算并记账三笔 `Payout/Refund/Fee`；`fee=0` 的 `Fee` 事件可省略；Cancelled/Forfeited 不计费。
 
 （费用验证器的参考配置见附录 §16.7，信息性。）
@@ -655,7 +659,7 @@ function _safeTransferIn(token, subject, amount) internal {
   - 安全：只读、无外部状态变更与复杂回调；失败路径清晰可诊断。
 
 ### 16.7 参考配置 B：费用验证器（信息性）
-- 说明：本附录与 §2.6/§6.1 中对“费用验证器（MAY）”的描述相对应，仅提供参考 ABI/治理入口/事件，不构成规范性要求。
+- 说明：本附录与 §2.6/§6.1 的描述相对应，仅提供参考 ABI/治理入口/事件，不构成规范性要求。
 - 接口占位：`interface IFeeValidator { function validate(address feeRecipient, uint16 feeBps) external view returns (bool ok); }`
 - 语义：当且仅当 `feeRecipient != 0 ∧ feeBps > 0` 时参与创建期只读校验；若部署启用且返回 `false`，创建入口应回滚。`feeBps ≤ 10_000` 的硬上限仍在正文（INV.14 所在章节）。
 - 治理入口（示例）：`setFeeValidator(validator)`，更新事件 `FeeValidatorUpdated(prev, next)`；更换仅影响新订单，不改变既有订单。

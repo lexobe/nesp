@@ -12,7 +12,7 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 核心流程
 - Step 1 托管：买方把应付款先存入托管账户（E）。
 - Step 2 交付：卖方接单并完成交付/发货。
-- Step 3 验收放款（无争议）：买方验收通过，托管款一次性全额打给卖方（E）（若配置 FeeHook，卖方实际可提为 `E − fee`；详见 §3.3 终态资金口径）。
+- Step 3 验收放款（无争议）：买方验收通过，托管款一次性全额打给卖方（E）（若订单固化了 `feeRecipient, feeBps`，卖方实际可提为 `E − fee`，其中 `fee = floor(E * feeBps / 10_000)`；详见 §4 INV.14）。
 - Step 4 发起争议（如有）：在限定时间内提出分歧。
 - Step 5 限时协商：双方在争议期内商定付款数额 A（A≤E）→ 按 A 付款，剩余返还买方。
 - Step 6 超时威慑：若超时仍未达成一致，则对称没收这笔托管款（双方都拿不到，划入 ForfeitPool；罚没资产默认沉淀于协议，可由治理模块提取用于协议费用；其他用途须经社区决议授权）。
@@ -66,6 +66,8 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - 原生 ETH 支持：当订单资产为 ETH 时，`depositEscrow`/`createAndDeposit` 为 `payable`，要求 `msg.value == amount`；提现使用 `call` 且 `nonReentrant`。
   - ERC‑20 资产：要求 `msg.value == 0`，并使用 SafeERC20 `transferFrom` 扣划 `amount`（或在 `createAndDeposit` 中一并完成）。
   - 建议（SHOULD）：部署方可提供“封装 ETH（WETH）适配层”作为工程选项，但规范层面必须支持原生 ETH。
+  - ETH 口径：ETH 默认视为受支持资产；若部署方需要临时熔断，应在适配层执行 denylist（信息性），不得通过常设策略钩子长期拒绝 ETH（保持“ETH 一等公民”）。
+  - 可选策略钩子（MAY）：部署方可挂接只读资产策略 `IAssetPolicy`；当配置的 `policy.isSupported(tokenAddr) == false` 时，相关入口 MUST `revert`（`ErrAssetUnsupported`）。未配置该钩子时，默认仅依赖恒等对账（见 INV.7）。
 
 ### 2.1 参数协商与范围（规范性）
 - 协商主体与生效时点（MUST）：`E`、`D_due`、`D_rev`、`D_dis` 由 Client 与 Contractor 针对“每一笔订单”达成一致；实现必须在订单建立/接受时将其作为“订单字段”固化存储。
@@ -80,8 +82,8 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 
 ## 3) 状态机与守卫（规范性，SSOT）
 
-### 3.0 允许的转换（除此之外无其他，MUST）
 注：变量与时间相关的副作用统一见 3.2 “守卫与副作用”。下列每条转移标注发起方：client、contractor、任意（三类含义：买方、卖方、无主体限制）。
+### 3.0 允许的转换（除此之外无其他，MUST）
 - E1 Initialized -acceptOrder-> Executing（发起方：contractor）
 - E2 Initialized -cancelOrder-> Cancelled（发起方：client/contractor）
 - E3 Executing -markReady-> Reviewing（发起方：contractor）
@@ -149,7 +151,7 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - G.E10 `raiseDispute`（评审阶段）：
     - Condition：`state = Reviewing` 且 `now < readyAt + D_rev`。
     - Subject：`client` 或 `contractor`。
-    - Effects：状态转入 Disputing，保持/设置 `disputeStart = now` 并冻结托管额。
+    - Effects：状态转入 Disputing，设置 `disputeStart = now`（锚点一次性），并冻结托管额。
     - Failure：条件未满足 MUST `revert`。
   - G.E6 `cancelOrder`（client）：
     - Condition：`state = Executing`、`readyAt` 未设置，且 `now ≥ startTime + D_due`。
@@ -201,7 +203,8 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
     - 全量资金恒等式（审计）：分 `tokenAddr` 核对“合约资产余额 = Σ 未终态订单 escrow + Σ 用户聚合可提余额 + forfeitBalance”。
   - INV.9 比例路径兼容（可选）：`amountToSeller = floor(escrow * num / den)`；余数全部计入买方退款。实现 MUST 使用安全的“mulDiv 向下取整”或等效无溢出实现；任何溢出/下溢 MUST revert；禁止四舍五入与精度提升。
 - INV.10 Pull 语义：状态变更仅“记账可领额”（聚合到 `balance[token][addr]`），实际转账仅在 `withdraw(token)` 发生；治理提款为系统级外流，不属于用户 `withdraw(token)`，但须满足 INV.8 与安全约束；禁止在状态变更入口直接 `transfer`。
-  - INV.14 手续费（FeeHook）：当订单处于 Settled 终态时，若已配置 `feeHook`，则按 Hook 返回的 `fee` 计入手续费可提余额；必须满足 `0 ≤ fee ≤ amountToSeller`，且守恒成立：`(amountToSeller − fee) + (escrow − amountToSeller) + fee = escrow`。当 `feeHook = address(0)` 或 `fee = 0` 时不产生 Fee 记账与事件；Cancelled/Forfeited 不计费。
+  - INV.14 手续费（BPS 内联）：当订单处于 Settled 终态时，若已固化 `feeRecipient, feeBps`，则按 `fee = floor(amountToSeller * feeBps / 10_000)` 计入 `feeRecipient` 的可提余额；必须满足 `0 ≤ fee ≤ amountToSeller`，且守恒成立：`(amountToSeller − fee) + (escrow − amountToSeller) + fee = escrow`。当 `feeRecipient = address(0)` 或 `feeBps = 0` 时，`fee = 0`，不产生 Fee 记账与事件；Cancelled/Forfeited 不计费（不产生任何手续费）。
+    - 取整与资产：`floor` 固定向下取整，与代币小数位无关；金额计算在整数域进行，采用“先乘后除”或等效安全 `mulDiv` 向下取整实现，禁止四舍五入与提精度；任何溢出/下溢 MUST `revert`。
   - INV.11 锚点一次性：`startTime/readyAt/disputeStart` 一旦设置，MUST NOT 修改或回拨（仅允许“未设置 → 设置一次”）。
   - INV.12 计时器规则：`D_due/D_rev` 仅允许延后（单调增加，且在进入 Disputing 前）；`D_dis` 固定且不可延长。
   - INV.13 唯一机制：无争议路径必须全额结清；争议路径采用签名金额结清；金额口径始终满足 `A ≤ E`，链上仅记录托管与结清。
@@ -218,6 +221,9 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - 终态/非法状态的入口调用 → `ErrInvalidState`
   - 托管不足/超额 → `ErrOverEscrow`
   - 非标准/不支持资产 → `ErrAssetUnsupported`
+  - 费用验证器未设置（创建期）→ `ErrFeeValidatorUnset`
+  - 费用验证失败（创建期）→ `ErrFeeValidationFailed`
+  - 费率超上限（`feeBps > 10_000`）→ `ErrFeeBpsTooHigh`
 - 重入与交互顺序：提现 `nonReentrant`，遵循 CEI。
 - 时间边界：统一区块时间；`D_due/D_rev` 仅允许延后（单调），`D_dis` 固定且不可延长。
 - 残余风险：破坏型对手导致的没收外部性 → 由社会层资质/信誉/稽核约束。
@@ -230,11 +236,16 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 
 ## 7) API 与事件契约（映射状态机/不变量）
 - 函数（最小集）：
-  - `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtx) -> orderId`
+  - `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, feeRecipient, feeBps) -> orderId`
     - 零值采用默认（MUST）：若 `dueSec/revSec/disSec` 传入 0，表示采用协议默认值（`1d/1d/7d`）；事件 `OrderCreated` 中的 `dueSec/revSec/disSec` 必须记录替换后的“生效值”（非 0）。
-  - `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtx, amount)`（payable）→ 创建并充值（ETH: `msg.value==amount`；ERC‑20: `SafeERC20.safeTransferFrom` amount）
+    - 非零费参校验（MUST）：当 `feeRecipient != 0 ∧ feeBps > 0` 且部署启用“费用验证器”（MAY）时，创建期必须通过只读校验；`feeBps ≤ 10_000`；若启用且校验失败 MUST `revert`。
+  - `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, feeRecipient, feeBps, amount)`（payable）→ 创建并充值（ETH: `msg.value==amount`；ERC‑20: `SafeERC20.safeTransferFrom` amount）
+    - Failure（两入口共通）：
+      - 当启用费用验证器且 `feeRecipient != 0 ∧ feeBps > 0` 时，如验证器地址未设置或 `validate(...)` 返回 `false`，MUST `revert`（错误命名示例化）。
+      - 当 `feeBps > 10_000`，MUST `revert`（建议错误名：`ErrFeeBpsTooHigh`）。
   - `depositEscrow(orderId, amount)`（payable；同上资产规则）
     - 权限（MUST）：permissionless。允许任意 EOA 或合约调用，不得因为调用通道（`via`）而拒绝入金。
+    - 资产策略钩子（MAY）：当已配置 `IAssetPolicy` 且 `policy.isSupported(order.tokenAddr) == false` 时，MUST `revert`（`ErrAssetUnsupported`）。
     - 扣款主体（MUST）：
       - ERC‑20：从“主体 subject”扣至核心合约（`SafeERC20.safeTransferFrom(subject, this, amount)`），subject 解析见下方 `EscrowDeposited` 事件的 `from/via` 口径；
       - ETH：`msg.value == amount`。
@@ -243,11 +254,12 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - `cancelOrder(orderId)`
   - `withdraw(tokenAddr)`：提取累计收益或退款（Pull 语义，`nonReentrant`），成功时触发 `BalanceWithdrawn`。
   - `withdrawForfeit(tokenAddr, to, amount)`：治理模块调用，从 ForfeitPool 中提取指定资产；成功时触发 `ProtocolFeeWithdrawn`。
+  - （治理 setter 与更新事件）关于费用验证器与资产策略的参考配置见附录 §12.A/§12.B（信息性；不属最小函数集）。
   - `extendDue(orderId, newDueSec)`；`extendReview(orderId, newRevSec)`（单调延后）
-  - `getOrder(orderId) view`：返回 `{client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart, feeHook, feeCtxHash}`。
+  - `getOrder(orderId) view`：返回 `{client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart, feeRecipient, feeBps}`。
   - `withdrawableOf(tokenAddr, account) view`：读取聚合可提余额（涵盖 `Payout/Refund/Fee`）。
 - 事件（建议的最小充分字段；单一清单）：
-  - `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, feeHook, feeCtxHash)`
+  - `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, feeRecipient, feeBps)`
   - `EscrowDeposited(orderId, from, amount, newEscrow, via)`；`Accepted(orderId, escrow)`；`ReadyMarked(orderId, readyAt)`；`DisputeRaised(orderId, by)`
     - 字段口径（更新）：
       - `via` 表示调用通道来源：`address(0)` 为直连（`msg.sender == tx.origin`）；否则等于本次调用的 `msg.sender`（任意合约，包括 2771/4337/Router 等）。`via` 仅用于审计溯源，不作为授权判据。
@@ -261,7 +273,10 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - `BalanceCredited(orderId, to, tokenAddr, amount, kind)`（`kind ∈ {Payout, Refund, Fee}`）
   - `BalanceWithdrawn(to, tokenAddr, amount)`
   - `ProtocolFeeWithdrawn(tokenAddr, to, amount, actor)`
-  - 说明：事件不再携带显式时间字段，统一以日志所在区块的 `block.timestamp` 作为时间锚点。
+  - （验证器/资产策略更新类事件见附录 §12.A/§12.B，信息性）
+- 说明：事件不再携带显式时间字段，统一以日志所在区块的 `block.timestamp` 作为时间锚点。
+
+（参考接口与 setter/事件）费用验证器与资产策略的 ABI 见附录 §12.A/§12.B（信息性）。
 
 #### 7.A 证据承诺（可选扩展，NESP‑EVC）
 证据承诺不属于内核规范；接口/事件与实现建议见 NESP‑EVC 扩展文档。
@@ -324,3 +339,18 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 
 
 ---
+
+### 12.A 参考配置：资产策略钩子（信息性）
+- 接口占位：`interface IAssetPolicy { function isSupported(address token) external view returns (bool); }`
+- 语义：仅用于只读判定 `tokenAddr` 是否受支持；返回 `false` 时，相关主流程入口应回滚（`ErrAssetUnsupported`）。
+- 治理入口（示例）：`setAssetPolicy(policy)`，更新事件 `AssetPolicyUpdated(prev, next)`；可设置为 `address(0)` 表示关闭策略钩子。此类 setter/事件不属于内核最小集，部署方可按需采用。
+- 边界与安全：
+  - 可信中立：策略不得引入价格/价值裁量；不得改变金额/时间/事件口径。
+  - 读路径：只读、无外部状态变更与复杂回调；失败路径清晰可诊断。
+  - ETH 口径：ETH 默认视为受支持；若因运营需要临时熔断，建议在适配层以 denylist 实施（不改变内核语义）。
+
+### 12.B 参考配置：费用验证器（信息性）
+- 接口占位：`interface IFeeValidator { function validate(address feeRecipient, uint16 feeBps) external view returns (bool ok); }`
+- 语义：当且仅当 `feeRecipient != 0 ∧ feeBps > 0` 时参与创建期只读校验；若部署启用且返回 `false`，创建入口应回滚。`feeBps ≤ 10_000` 的硬上限与手续费计算（INV.14）在正文。
+- 治理入口（示例）：`setFeeValidator(validator)`，更新事件 `FeeValidatorUpdated(prev, next)`；更换仅影响新订单，不改变既有订单。
+- 安全：只读、无状态变更；建议将 Gas 上限控制在合理范围（信息性）；错误命名可实现自定，但语义须可审计复现。

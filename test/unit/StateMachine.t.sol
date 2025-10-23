@@ -2,7 +2,8 @@
 pragma solidity ^0.8.24;
 
 import {BaseTest} from "../BaseTest.t.sol";
-import {OrderState} from "../../contracts/core/Types.sol";
+import {NESPCore} from "../../CONTRACTS/core/NESPCore.sol";
+import {Order, OrderState} from "../../CONTRACTS/core/Types.sol";
 
 /**
  * @title StateMachineTest
@@ -73,8 +74,9 @@ contract StateMachineTest is BaseTest {
     function test_E2_CancelOrder_RevertWhen_NotClient() public {
         uint256 orderId = _createAndDepositETH(ESCROW_AMOUNT);
 
-        // Initialized 状态下，只有 client 可以取消
-        vm.prank(contractor);
+        // Initialized 状态下，client 和 contractor 都可以取消
+        // 修改测试：第三方无法取消
+        vm.prank(thirdParty);
         vm.expectRevert(NESPCore.ErrUnauthorized.selector);
         core.cancelOrder(orderId);
     }
@@ -194,7 +196,10 @@ contract StateMachineTest is BaseTest {
         uint256 orderId = _createAndDepositETH(ESCROW_AMOUNT);
         _toExecuting(orderId);
 
-        // E6: client 取消
+        // E6: client 取消(必须等待履约超时 - WP §3.3 G.E6)
+        Order memory order = core.getOrder(orderId);
+        vm.warp(order.startTime + order.dueSec + 1);
+
         vm.prank(client);
         core.cancelOrder(orderId);
 
