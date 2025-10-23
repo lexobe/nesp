@@ -2,7 +2,7 @@
 src = "CONTRACTS"
 out = "out"
 libs = ["lib"]
-test = "test"
+test = "TESTS"
 cache_path = "cache"
 
 # Solidity 编译器配置
@@ -35,8 +35,10 @@ number_underscore = "thousands"
 [rpc_endpoints]
 sepolia = "${SEPOLIA_RPC_URL}"
 mainnet = "${MAINNET_RPC_URL}"
+base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
 
 # Etherscan 配置
 [etherscan]
 sepolia = { key = "${ETHERSCAN_API_KEY}" }
 mainnet = { key = "${ETHERSCAN_API_KEY}" }
+base_sepolia = { key = "${BASESCAN_API_KEY}", url = "https://api-sepolia.basescan.org/api" }
