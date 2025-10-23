@@ -216,6 +216,8 @@ contract NESPCore is INESPEvents {
     function markReady(uint256 orderId) external nonReentrant {
         Order storage order = _orders[orderId];
         if (order.state != OrderState.Executing) revert ErrInvalidState();
+        // WP §3.3 G.E3: now < startTime + D_due (non-timeout path)
+        if (block.timestamp >= order.startTime + order.dueSec) revert ErrExpired();
         if (msg.sender != order.contractor) revert ErrUnauthorized();
         order.state = OrderState.Reviewing;
         order.readyAt = uint48(block.timestamp);
@@ -235,7 +237,15 @@ contract NESPCore is INESPEvents {
     function raiseDispute(uint256 orderId) external nonReentrant {
         Order storage order = _orders[orderId];
         if (order.state != OrderState.Executing && order.state != OrderState.Reviewing) revert ErrInvalidState();
+
+        // WP §3.3 G.E5: Executing state requires now < startTime + D_due (non-timeout path)
+        if (order.state == OrderState.Executing && block.timestamp >= order.startTime + order.dueSec) {
+            revert ErrExpired();
+        }
+
+        // WP §3.3 G.E10: Reviewing state requires now < readyAt + D_rev (non-timeout path)
         if (order.state == OrderState.Reviewing && block.timestamp >= order.readyAt + order.revSec) revert ErrExpired();
+
         if (msg.sender != order.client && msg.sender != order.contractor) revert ErrUnauthorized();
         order.state = OrderState.Disputing;
         order.disputeStart = uint48(block.timestamp);
@@ -261,7 +271,8 @@ contract NESPCore is INESPEvents {
     ) external nonReentrant {
         Order storage order = _orders[orderId];
         if (order.state != OrderState.Disputing) revert ErrInvalidState();
-        if (block.timestamp > deadline) revert ErrExpired();
+        // WP §3.3: Non-timeout path requires now < deadline (complement: check now >= deadline)
+        if (block.timestamp >= deadline) revert ErrExpired();
         if (amountToSeller > order.escrow) revert ErrOverEscrow();
 
         // Verify proposer/acceptor are client/contractor (in any order)

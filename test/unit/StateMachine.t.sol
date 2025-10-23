@@ -119,6 +119,44 @@ contract StateMachineTest is BaseTest {
         core.markReady(orderId);
     }
 
+    /**
+     * @notice 测试 E3: markReady 在履约超时后应该 revert
+     * @dev WP §3.3 G.E3: 要求 now < startTime + D_due（非超时路径）
+     */
+    function test_E3_MarkReady_RevertWhen_AfterDueTimeout() public {
+        uint256 orderId = _createAndDepositETH(ESCROW_AMOUNT);
+        _toExecuting(orderId);
+
+        Order memory order = core.getOrder(orderId);
+
+        // 快进到履约超时后
+        vm.warp(order.startTime + order.dueSec + 1);
+
+        // contractor 尝试标记完成应该 revert
+        vm.prank(contractor);
+        vm.expectRevert(NESPCore.ErrExpired.selector);
+        core.markReady(orderId);
+    }
+
+    /**
+     * @notice 测试 E3: markReady 恰好在履约超时时刻应该 revert
+     * @dev WP §3.3: 精确边界时刻，仅允许超时路径（E6 cancelOrder）
+     */
+    function test_E3_MarkReady_RevertWhen_ExactlyAtDueDeadline() public {
+        uint256 orderId = _createAndDepositETH(ESCROW_AMOUNT);
+        _toExecuting(orderId);
+
+        Order memory order = core.getOrder(orderId);
+
+        // 快进到恰好履约超时时刻
+        vm.warp(order.startTime + order.dueSec);
+
+        // contractor 尝试标记完成应该 revert（边界时刻仅允许 E6）
+        vm.prank(contractor);
+        vm.expectRevert(NESPCore.ErrExpired.selector);
+        core.markReady(orderId);
+    }
+
     // ============================================
     // E4: approveReceipt (Executing → Settled)
     // ============================================
@@ -185,6 +223,49 @@ contract StateMachineTest is BaseTest {
         // 第三方无法发起争议
         vm.prank(thirdParty);
         vm.expectRevert(NESPCore.ErrUnauthorized.selector);
+        core.raiseDispute(orderId);
+    }
+
+    /**
+     * @notice 测试 E5: raiseDispute 在履约超时后应该 revert
+     * @dev WP §3.3 G.E5: 要求 state = Executing AND now < startTime + D_due（非超时路径）
+     */
+    function test_E5_RaiseDispute_RevertWhen_AfterDueTimeout() public {
+        uint256 orderId = _createAndDepositETH(ESCROW_AMOUNT);
+        _toExecuting(orderId);
+
+        Order memory order = core.getOrder(orderId);
+
+        // 快进到履约超时后
+        vm.warp(order.startTime + order.dueSec + 1);
+
+        // client 尝试发起争议应该 revert
+        vm.prank(client);
+        vm.expectRevert(NESPCore.ErrExpired.selector);
+        core.raiseDispute(orderId);
+
+        // contractor 尝试发起争议也应该 revert
+        vm.prank(contractor);
+        vm.expectRevert(NESPCore.ErrExpired.selector);
+        core.raiseDispute(orderId);
+    }
+
+    /**
+     * @notice 测试 E5: raiseDispute 恰好在履约超时时刻应该 revert
+     * @dev WP §3.3: 精确边界时刻，仅允许超时路径（E6 cancelOrder）
+     */
+    function test_E5_RaiseDispute_RevertWhen_ExactlyAtDueDeadline() public {
+        uint256 orderId = _createAndDepositETH(ESCROW_AMOUNT);
+        _toExecuting(orderId);
+
+        Order memory order = core.getOrder(orderId);
+
+        // 快进到恰好履约超时时刻
+        vm.warp(order.startTime + order.dueSec);
+
+        // client 尝试发起争议应该 revert（边界时刻仅允许 E6）
+        vm.prank(client);
+        vm.expectRevert(NESPCore.ErrExpired.selector);
         core.raiseDispute(orderId);
     }
 
