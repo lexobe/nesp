@@ -197,6 +197,7 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
     - 买方 Refund：`refundToBuyer = escrow − amountToSeller`；
     - 手续费 Fee：`fee` 记入 `feeRecipient`；其中 `fee = floor(amountToSeller * feeBps / 10_000)`；
     金额为 0 的 `Fee` 记账可省略事件；
+    （单位与取整口径参见 §2.3）
   - Forfeited：将原订单 `escrow` 全额计入 `forfeitBalance[tokenAddr]`（罚没），不记入任何用户余额。
   - Cancelled：将原订单 `escrow` 全额记入买方可提余额（Refund）。
 - 注：治理提款不属于用户提现路径；不改变订单维度的记账与聚合可提余额；不触发 `Balance{Credited,Withdrawn}` 事件；可在满足授权条件时独立执行。
@@ -329,6 +330,7 @@ function _safeTransferIn(token, subject, amount) internal {
 - `timeoutSettle(orderId)`：在评审超时后由任意主体触发全额结清。触发事件：`Settled(actor=Timeout)` 与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账；手续费按已固化参数内联计算，费用计算遵循 `INV.14` 的 `floor` 规则。
 - `raiseDispute(orderId)`：进入争议状态，`subject ∈ {client, contractor}`，记录 `disputeStart`。触发事件：`DisputeRaised`。
 - `settleWithSigs(orderId, payload, sig1, sig2)`：争议期内按签名报文结清金额 A（守卫 `A ≤ escrow`）。触发事件：`AmountSettled` 与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账（终态为 `Settled`）；手续费按已固化参数内联计算，费用计算遵循 `INV.14` 的 `floor` 规则。
+  - 说明：`payload` 为 EIP‑712 TypedData（见 §5.1），最小字段集合：`{chainId, contract, orderId, tokenAddr, amountToSeller(=A), proposer, acceptor, nonce, deadline}`；签名校验与防重放口径同 §5.1。
 - `timeoutForfeit(orderId)`：争议超时由任意主体触发对称没收。触发事件：`Forfeited(orderId, tokenAddr, amount)`。
 - `cancelOrder(orderId)`：根据守卫（G.E6/G.E7/G.E11）由 client 或 contractor 取消订单。触发事件：`Cancelled`，与后续 `BalanceCredited（kind=Refund）` 记账。
 - `withdraw(tokenAddr)`：提取累计收益或退款（Pull 语义，`nonReentrant`）；成功时触发 `BalanceWithdrawn` 事件。
@@ -376,6 +378,10 @@ function _safeTransferIn(token, subject, amount) internal {
   - 元交易签名：对需主体守卫的入口可提供 EIP‑712/1271 签名变体，任何地址可提交；核心仅验签与防重放；事件记录 `via` 以便审计（应用层可自行选择是否采用该路径）。
 - `depositEscrow` 始终为 permissionless；`via` 仅用于审计与归因，不作为授权判据。
 - 当无法按上述规则确定 `subject` 时，所有需主体守卫的入口 MUST `revert`（`ErrUnauthorized`）；授权失败为回滚路径，不触发对应事件。
+
+（需主体守卫的入口与签名变体覆盖，信息性）
+- 需主体守卫的入口（最小集）：`acceptOrder`（contractor）、`markReady`（contractor）、`approveReceipt`（client）、`raiseDispute`（client/contractor）、`extendDue`（client）、`extendReview`（contractor）、`cancelOrder`（client/contractor）。
+- 签名路径：除已提供的 `settleWithSigs` 外，其余入口的签名变体为实现选项（MAY）；实现如提供签名版，MUST 满足 §5.1 的签名域与防重放口径，并记录 `via` 以便审计。
 
 #### 审计建议（信息性）
 - 可选工件：
