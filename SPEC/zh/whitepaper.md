@@ -74,7 +74,9 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 - 建议：支持“WETH 适配层”作为工程选项，但规范层必须支持原生 ETH。
 
 ### 2.6 参数协商与范围（规范）
-- 协商主体与生效时点：`E`、`D_due`、`D_rev`、`D_dis` 由 Client 与 Contractor 针对“每一笔订单”达成一致；实现必须在订单建立/接受时固化存储。订单可固化手续费策略 `feeHook` 与上下文哈希 `feeCtxHash`（创建即锁定，不可修改）；允许 `feeHook = address(0)` 表示不计费。
+- 协商主体与生效时点：`E`、`D_due`、`D_rev`、`D_dis` 由 Client 与 Contractor 针对“每一笔订单”达成一致；实现必须在订单建立/接受时固化存储。订单在创建时固化手续费参数 `feeRecipient` 与 `feeBps`（基点，1/10_000），并调用“唯一全局验证器”进行只读有效性校验；一旦固化，不可修改。约定：当 `feeRecipient = address(0)` 或 `feeBps = 0` 时表示不计费，且跳过验证器校验。
+  - 上限：`feeBps ≤ 10_000`（MUST）。
+  - 失败语义：当验证器地址未设置（零地址）且 `feeRecipient != 0 ∧ feeBps > 0`，或验证器 `validate(...)` 返回 `false`，创建入口 MUST `revert`（建议错误名：`ErrFeeValidatorUnset/ErrFeeValidationFailed/ErrFeeBpsTooHigh`，错误命名示例化，语义须一致）。
 - 默认值：若 `dueSec/revSec/disSec` 传入 0，则采用协议默认 `D_due=1d=86_400s`、`D_rev=1d=86_400s`、`D_dis=7d=604_800s`；入库与事件需记录替换后的“生效值”。
 - 修改规则：`E` 仅可单调增加；`D_due/D_rev` 仅允许在争议发生前单调延后；`D_dis` 自设置后固定，不提供延长入口。
 - 有界性：三者必须为有限值且大于 0；为抵御重组，`D_dis ≥ 2·T_reorg`（由部署方按目标链给出估计）。
@@ -193,7 +195,7 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
   - Settled：记账三笔：
     - 卖方 Payout：`payoutToSeller = amountToSeller − fee`（`0 ≤ fee ≤ amountToSeller`）；
     - 买方 Refund：`refundToBuyer = escrow − amountToSeller`；
-    - 手续费 Fee：`fee` 记入手续费受益地址（由手续费策略计算/返回）；
+    - 手续费 Fee：`fee` 记入 `feeRecipient`；其中 `fee = floor(amountToSeller * feeBps / 10_000)`；
     金额为 0 的 `Fee` 记账可省略事件；
   - Forfeited：将原订单 `escrow` 全额计入 `forfeitBalance[tokenAddr]`（罚没），不记入任何用户余额。
   - Cancelled：将原订单 `escrow` 全额记入买方可提余额（Refund）。
@@ -205,8 +207,9 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 - INV.1 全额结清：`amountToSeller = escrow`（approve/timeout）。
 - INV.2 金额型结清：`amountToSeller = A` 且 `0 ≤ A ≤ escrow`（签名协商）。
 - INV.3 退款：`refundToBuyer = escrow − amountToSeller`（若 A < escrow）。
-- INV.14 平台费（服务商）：当订单处于 Settled 终态时，若已固化 `provider, feeBps`，则按 `fee = floor(amountToSeller * feeBps / 10_000)` 计入服务商可提余额；必须满足 `0 ≤ fee ≤ amountToSeller`，且守恒成立：`(amountToSeller − fee) + (escrow − amountToSeller) + fee = escrow`。Cancelled/Forfeited 不产生平台费。
-  - 注：当 `provider = address(0)` 或 `feeBps = 0` 时，`fee = 0`，不产生 `kind=Fee` 的记账与事件（仍满足守恒式）。
+- INV.14 平台费（服务商）：当订单处于 Settled 终态时，若已固化 `feeRecipient, feeBps`，则按 `fee = floor(amountToSeller * feeBps / 10_000)` 计入 `feeRecipient` 可提余额；必须满足 `0 ≤ fee ≤ amountToSeller`，且守恒成立：`(amountToSeller − fee) + (escrow − amountToSeller) + fee = escrow`。Cancelled/Forfeited 不产生平台费。
+  - 注：当 `feeRecipient = address(0)` 或 `feeBps = 0` 时，`fee = 0`，不产生 `kind=Fee` 的记账与事件（仍满足守恒式）。
+  - 注（取整与资产）：`floor` 固定向下取整，与代币小数位无关；金额单位为对应 `token` 的最小单位，所有比例计算在整数域进行，先乘后除以避免精度丢失。
 
 ### 4.2 资金安全
 - INV.4 单次入账：每单至多一次将结清额/退款额入账至聚合余额（single_credit），防止重复计入可提余额。
@@ -313,17 +316,19 @@ function _safeTransferIn(token, subject, amount) internal {
 （信息性）证据承诺为可选扩展（NESP‑EVC：Evidence Commitments）；可在应用层增加扩展接口与合约实现，内核不强制，且不纳入本规范评审。
 
 ### 6.1 函数（最小集）
- - `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtx)`：创建订单，固化资产/时间锚点与手续费策略（`feeHook` 可为 `address(0)` 表示不计费；`feeCtx` 建议仅在事件中记录哈希）。
- - `createOrder(...)` 触发事件：`OrderCreated`。
- - `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, feeHook, feeCtx, amount)`（payable） ：创建并立即充值指定金额（ETH：`msg.value == amount`；ERC‑20：`SafeERC20.safeTransferFrom(subject, this, amount)`）。
- - `createAndDeposit(...)` 触发事件：`OrderCreated`、`EscrowDeposited`（同一交易）。
+- `createOrder(tokenAddr, contractor, dueSec, revSec, disSec, feeRecipient, feeBps)`：创建订单，固化资产/时间锚点与手续费参数（`feeRecipient=address(0)` 或 `feeBps=0` 表示不计费；否则必须通过“唯一全局验证器”只读校验）。
+- `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, feeRecipient, feeBps, amount)`（payable） ：创建并立即充值指定金额（ETH：`msg.value == amount`；ERC‑20：`SafeERC20.safeTransferFrom(subject, this, amount)`）。
+  - Failure（两入口共通）：
+    - 当 `feeRecipient != 0 ∧ feeBps > 0` 且验证器地址未设置（零地址），MUST `revert`（建议错误名：`ErrFeeValidatorUnset`）。
+    - 当 `feeRecipient != 0 ∧ feeBps > 0` 且验证器 `validate(...)` 返回 `false`，MUST `revert`（建议错误名：`ErrFeeValidationFailed`）。
+    - 当 `feeBps > 10_000`，MUST `revert`（建议错误名：`ErrFeeBpsTooHigh`）。
 - `depositEscrow(orderId, amount)`（payable）：补充托管额，允许 client 或第三方赠与；入口遵守资产与冻结守卫。触发事件：`EscrowDeposited`。
 - `acceptOrder(orderId)`：承接订单，需 `subject == contractor`，并设置 `startTime`。触发事件：`Accepted`。
 - `markReady(orderId)`：卖方声明交付就绪，仅 `subject == contractor`，设置 `readyAt` 并启动评审窗口。触发事件：`ReadyMarked`。
-- `approveReceipt(orderId)`：买方验证交付并触发结清（`subject == client`）。触发事件：`Settled(actor=Client)` 与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账。
-- `timeoutSettle(orderId)`：在评审超时后由任意主体触发全额结清。触发事件：`Settled(actor=Timeout)` 与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账。
+- `approveReceipt(orderId)`：买方验证交付并触发结清（`subject == client`）。触发事件：`Settled(actor=Client)` 与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账；手续费按已固化 `feeRecipient, feeBps` 内联计算，费用计算遵循 `INV.14` 的 `floor` 规则。
+- `timeoutSettle(orderId)`：在评审超时后由任意主体触发全额结清。触发事件：`Settled(actor=Timeout)` 与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账；手续费按已固化参数内联计算，费用计算遵循 `INV.14` 的 `floor` 规则。
 - `raiseDispute(orderId)`：进入争议状态，`subject ∈ {client, contractor}`，记录 `disputeStart`。触发事件：`DisputeRaised`。
-- `settleWithSigs(orderId, payload, sig1, sig2)`：争议期内按签名报文结清金额 A（守卫 `A ≤ escrow`）。触发事件：`AmountSettled` 与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账（终态为 `Settled`）。
+- `settleWithSigs(orderId, payload, sig1, sig2)`：争议期内按签名报文结清金额 A（守卫 `A ≤ escrow`）。触发事件：`AmountSettled` 与后续 `BalanceCredited（kind=Payout/Refund/Fee）` 记账（终态为 `Settled`）；手续费按已固化参数内联计算，费用计算遵循 `INV.14` 的 `floor` 规则。
 - `timeoutForfeit(orderId)`：争议超时由任意主体触发对称没收。触发事件：`Forfeited(orderId, tokenAddr, amount)`。
 - `cancelOrder(orderId)`：根据守卫（G.E6/G.E7/G.E11）由 client 或 contractor 取消订单。触发事件：`Cancelled`，与后续 `BalanceCredited（kind=Refund）` 记账。
 - `withdraw(tokenAddr)`：提取累计收益或退款（Pull 语义，`nonReentrant`）；成功时触发 `BalanceWithdrawn` 事件。
@@ -332,13 +337,18 @@ function _safeTransferIn(token, subject, amount) internal {
    - Subject：治理模块地址。
    - Effects：`forfeitBalance[tokenAddr] -= amount`；将资产转给 `to`；ETH 使用 `call{value:amount}`，ERC‑20 使用 `SafeERC20.safeTransfer`。
    - Failure：MUST `revert`（`ErrUnauthorized/ErrAmountZero/ErrInsufficientForfeit` 等）。上述错误命名为示例，实施可采用等价错误名，但语义与守卫必须一致。
-- `getOrder(orderId) view`：只读查询并返回 `{client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart, feeHook, feeCtxHash}`（`feeCtxHash` 为手续费策略上下文的哈希；原始 `feeCtx` 由链下保存，用于审计重放）。
+- （治理接口）`setFeeValidator(validator)`：设置“唯一全局验证器”地址（仅影响新创建订单）。
+  - Condition：`onlyGovernance`。
+  - Subject：治理模块地址。
+  - Effects：更新全局验证器地址；对已存在订单无影响；验证器必须为只读合约（见 §12.1）。调用成功 MUST 触发事件 `FeeValidatorUpdated(prev, next)`。
+  - Failure：MUST `revert`（`ErrUnauthorized` 等）。
+- `getOrder(orderId) view`：只读查询并返回 `{client, contractor, tokenAddr, state, escrow, dueSec, revSec, disSec, startTime, readyAt, disputeStart, feeRecipient, feeBps}`。
 - `withdrawableOf(tokenAddr, account) view`：读取聚合可提余额（涵盖 Payout/Refund/Fee），便于钱包等组件展示与核对。
 - `extendDue(orderId, newDueSec)`：client 单调延长履约窗口。触发事件：`DueExtended`（记录 old/new）。
 - `extendReview(orderId, newRevSec)`：contractor 单调延长评审窗口。触发事件：`ReviewExtended`（记录 old/new）。
 
 ### 6.2 事件（最小字段）
- - `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, feeHook, feeCtxHash)`：订单建立时触发，固化角色、时间参数与手续费策略（`feeHook` 可为 `address(0)`；`feeCtxHash` 为手续费策略上下文的哈希，原始 `feeCtx` 由链下保存用于审计重放）。事件的 `block.timestamp` 视为 `startTime` 候选锚点。
+- `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, feeRecipient, feeBps)`：订单建立时触发，固化角色、时间参数与手续费参数（`feeRecipient=address(0)` 或 `feeBps=0` 表示不计费）。事件的 `block.timestamp` 视为 `startTime` 候选锚点。
 - `EscrowDeposited(orderId, from, amount, newEscrow, via)`：托管额充值成功后触发，记录充值来源与调用通道；未启用受信路径时 `via = address(0)`。
 - `Accepted(orderId, escrow)`：承接订单（进入 Executing）时触发，确认当前托管额；`block.timestamp` 可作为 `startTime` 实际值校验。
 - `ReadyMarked(orderId, readyAt)`：卖方标记交付就绪时触发（进入 Reviewing），固化 `readyAt` 锚点。
@@ -351,8 +361,9 @@ function _safeTransferIn(token, subject, amount) internal {
 - `Forfeited(orderId, tokenAddr, amount)`：争议期超时被没收时触发；记录资产与没收金额（用于分资产对账与统计）。其中 `amount` 指没收时刻订单托管额（订单变更前的 E）。
 - `Cancelled(orderId, cancelledBy)`（`cancelledBy ∈ {Client, Contractor}`）：订单被取消时触发；与后续 `BalanceCredited（kind=Refund）` 记账。
  - `BalanceCredited(orderId, to, tokenAddr, amount, kind)`（`kind ∈ {Payout, Refund, Fee}`）：结清/退款/手续费记账到可提余额时触发（`kind=Fee` 的金额为 0 时可不发事件）。
-- `BalanceWithdrawn(to, tokenAddr, amount)`：用户提现成功时触发。
+ - `BalanceWithdrawn(to, tokenAddr, amount)`：用户提现成功时触发。
  - `ProtocolFeeWithdrawn(tokenAddr, to, amount, actor)`：治理提款成功时触发；`actor` 为治理调用者。
+ - `FeeValidatorUpdated(prev, next)`：全局验证器更新时触发，仅影响后续新订单的创建期校验；不改变任何既有订单。
 - 说明：事件不携带显式 `ts` 字段，默认以日志对应区块的 `block.timestamp` 作为时间锚点。
 
 ### 6.3 授权与来源（可选受信路径）
@@ -482,14 +493,22 @@ function _safeTransferIn(token, subject, amount) internal {
 - Pull/CEI/授权/重入：提现前清零、`nonReentrant`、授权校验与来源记录。
 - 非标资产：由适配层与白名单策略处理；异常资产路径显式失败。
 - 治理提款：实现 `forfeitBalance` 记账、`onlyGovernance` 守卫、CEI 顺序与 `nonReentrant`、ETH/ERC‑20 余额差核验；失败路径返回自定义错误（如 `ErrUnauthorized/ErrInsufficientForfeit`）。
- - 手续费 Hook（结清记账）：
-   - 存储：订单固化 `feeHook` 与 `feeCtxHash`（创建即锁定，不可修改；`feeHook=0` 表示不计费）。
-   - 调用：结清时以 STATICCALL 调用 Hook 只读计算 `fee` 与受益地址，内核仅记账三笔 `Payout/Refund/Fee` 并清零 `escrow`；`fee=0` 的 `Fee` 事件可省略；Cancelled/Forfeited 不计费。
+ - 手续费参数（创建期校验 + 结清内联计算）：
+  - 存储：订单在创建时固化 `feeRecipient` 与 `feeBps`（`feeRecipient=0` 或 `feeBps=0` 表示不计费）。
+  - 校验：创建期调用唯一全局验证器对 `(feeRecipient, feeBps)` 进行只读有效性校验；通过后方可入库；已固化订单在运行期不再依赖验证器。
+  - 计算：结清时按 `fee = floor(A * feeBps / 10_000)` 内联计算并记账三笔 `Payout/Refund/Fee`；`fee=0` 的 `Fee` 事件可省略；Cancelled/Forfeited 不计费。
+
+- 全局验证器（FeeValidator）约束（规范）
+  - 接口签名：`validate(address feeRecipient, uint16 feeBps) external view returns (bool ok)`。
+  - 只读：MUST 为 `view` 且不得修改任何链上状态；建议 Gas 上限 ≤ 50,000。
+  - 失败语义：当 `feeRecipient != 0 && feeBps > 0` 时，若验证器未设置（零地址）或返回 `false`，创建入口 MUST `revert`（建议错误名：`ErrFeeValidatorUnset/ErrFeeValidationFailed`）。
+  - 上限约束：硬上限 `feeBps ≤ 10_000`（超过 MUST `revert`，建议错误名：`ErrFeeBpsTooHigh`）。
+  - 生效范围：验证器的更换仅影响新订单；不改变任何已固化订单。
 
 ### 12.2 测试与验证（代表性）
 - 代表性用例：
   - 无争议全额/签名金额/超时没收；覆盖 A≤E、计时器边界、Pull/CEI、授权与签名重放。
-  - 手续费（FeeHook）结清三笔记账：`Payout=A−fee`、`Refund=E−A`、`Fee=onSettleFee(...)`，且 `escrow=0`、每种 kind≤1。
+  - 手续费（BPS）结清三笔记账：`Payout=A−fee`、`Refund=E−A`、`Fee=floor(A*feeBps/10_000)`，且 `escrow=0`、每种 kind≤1。
   - 费率边界：`fee=0`（bps=0）与 `fee` 上限（`bps=bpsMax` 或 10_000）均应通过；签名结清（settleWithSigs）同样计费。
 ## 13. 分阶段开放与治理（Phased Opening & Governance）
 
@@ -515,7 +534,7 @@ function _safeTransferIn(token, subject, amount) internal {
 - `E` 托管额；`A` 结清额；`V` 买方价值；`C` 卖方成本；
 - `D_due/D_rev/D_dis` 履约/评审/争议窗口；`startTime/readyAt/disputeStart` 锚点；
 - `ForfeitPool` 罚没逻辑账户（默认沉淀；仅治理提款；默认用于协议费用，其他用途须经社区决议）。
-- `FeeHook` 手续费策略（只读计算；可为 address(0) 表示不计费）；`feeCtxHash` 策略上下文哈希；`payoutToSeller = A − fee`。
+- `feeRecipient/feeBps` 手续费参数（创建期固化；`feeRecipient=address(0)` 或 `feeBps=0` 表示不计费）；`FeeValidator` 唯一全局验证器（仅在创建期进行只读有效性校验）；`payoutToSeller = A − fee`。
 
 ### 16.2 指标与事件口径表（简）
 - 事件：`OrderCreated/EscrowDeposited/Accepted/DisputeRaised/Settled/AmountSettled/Forfeited/Cancelled/Balance{Credited(kind=Fee 含在内),Withdrawn}/ProtocolFeeWithdrawn`。
