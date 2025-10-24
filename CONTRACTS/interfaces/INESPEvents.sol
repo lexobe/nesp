@@ -32,5 +32,6 @@ interface INESPEvents {
     event BalanceWithdrawn(address indexed to, address tokenAddr, uint256 amount);
     event ProtocolFeeWithdrawn(address indexed tokenAddr, address to, uint256 amount, address actor);
     event FeeValidatorUpdated(address prev, address next);
+    event UnaccountedFundsRecovered(address indexed tokenAddr, uint256 amount, address to);
 }
 
