@@ -6,6 +6,7 @@ import {INESPEvents} from "../interfaces/INESPEvents.sol";
 import {IFeeValidator} from "../interfaces/IFeeValidator.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 contract NESPCore is INESPEvents {
     using SafeERC20 for IERC20;
@@ -199,6 +200,10 @@ contract NESPCore is INESPEvents {
                 revert ErrUnauthorized();
             }
         } else if (st == OrderState.Reviewing) {
+            // G1 Fix: 评审窗口到期时只允许 timeoutSettle，禁止 cancel
+            if (order.readyAt != 0 && block.timestamp >= order.readyAt + order.revSec) {
+                revert ErrExpired();
+            }
             if (msg.sender != order.contractor) revert ErrUnauthorized();
         } else {
             revert ErrInvalidState();
@@ -353,7 +358,12 @@ contract NESPCore is INESPEvents {
             (bool ok, ) = msg.sender.call{value: amount}("");
             require(ok, "ETH transfer failed");
         } else {
+            // M3 Fix: Check balance difference to detect fee-on-transfer tokens
+            uint256 balBefore = IERC20(tokenAddr).balanceOf(address(this));
             IERC20(tokenAddr).safeTransfer(msg.sender, amount);
+            uint256 balAfter = IERC20(tokenAddr).balanceOf(address(this));
+            // Ensure the actual transferred amount equals the recorded amount
+            require(balBefore - balAfter == amount, "Fee-on-transfer not supported");
         }
         emit BalanceWithdrawn(msg.sender, tokenAddr, amount);
     }
@@ -365,10 +375,9 @@ contract NESPCore is INESPEvents {
         governance = newGovernance;
     }
 
+    // L2 Fix: Allow setting feeValidator to address(0) to disable fee validation
     function setFeeValidator(address validator) external {
         if (msg.sender != governance) revert ErrUnauthorized();
-        if (validator == address(0)) revert ErrZeroAddress();
-
         address prev = feeValidator;
         feeValidator = validator;
         emit FeeValidatorUpdated(prev, validator);
@@ -420,22 +429,17 @@ contract NESPCore is INESPEvents {
         emit BalanceCredited(orderId, to, tokenAddr, amount, kind);
     }
 
+    // M1 Fix: Use OpenZeppelin ECDSA library to prevent signature malleability
+    // ECDSA.recover automatically checks:
+    // - s value is in lower half order (s < secp256k1n/2 + 1)
+    // - v is either 27 or 28
     function _verifySignature(bytes32 digest, bytes calldata signature, address expectedSigner)
         internal
         pure
         returns (bool)
     {
-        if (signature.length != 65) return false;
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        assembly {
-            r := calldataload(signature.offset)
-            s := calldataload(add(signature.offset, 32))
-            v := byte(0, calldataload(add(signature.offset, 64)))
-        }
-        address recovered = ecrecover(digest, v, r, s);
-        return recovered == expectedSigner;
+        (address recovered, ECDSA.RecoverError error,) = ECDSA.tryRecover(digest, signature);
+        return error == ECDSA.RecoverError.NoError && recovered == expectedSigner;
     }
 
     receive() external payable {}
