@@ -1,0 +1,666 @@
+Warning: optimizer settings and `viaIR` have been disabled for accurate coverage reports.
+If you encounter "stack too deep" errors, consider using `--ir-minimum` which enables `viaIR` with minimum optimization resolving most of the errors
+Compiling 49 files with Solc 0.8.24
+Solc 0.8.24 finished in 1.63s
+Compiler run successful with warnings:
+Warning (3420): Source file does not specify required compiler version! Consider adding "pragma solidity ^0.8.24;"
+--> CONTRACTS/NESP.sol
+
+Warning (3420): Source file does not specify required compiler version! Consider adding "pragma solidity ^0.8.24;"
+--> CONTRACTS/interfaces/INESP.sol
+
+Warning (2072): Unused local variable.
+  --> TESTS/unit/ErrorCodes.t.sol:60:9:
+   |
+60 |         uint256 orderId = core.createOrder(
+   |         ^^^^^^^^^^^^^^^
+
+Warning (2072): Unused local variable.
+  --> TESTS/unit/Settlement.t.sol:81:9:
+   |
+81 |         uint256 amountToSeller = (ESCROW_AMOUNT * 60) / 100;
+   |         ^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (2072): Unused local variable.
+   --> TESTS/unit/Signatures.t.sol:370:9:
+    |
+370 |         bytes memory clientSig = _signSettlement(
+    |         ^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (2072): Unused local variable.
+   --> TESTS/unit/Signatures.t.sol:374:9:
+    |
+374 |         bytes memory contractorSig = _signSettlement(
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (2072): Unused local variable.
+   --> TESTS/unit/Signatures.t.sol:471:9:
+    |
+471 |         bytes memory clientSig = _signSettlement(
+    |         ^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (2072): Unused local variable.
+   --> TESTS/unit/Signatures.t.sol:475:9:
+    |
+475 |         bytes memory contractorSig = _signSettlement(
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to view
+   --> TESTS/BaseTest.t.sol:275:5:
+    |
+275 |     function _assertState(uint256 orderId, OrderState expectedState) internal {
+    |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to view
+   --> TESTS/BaseTest.t.sol:283:5:
+    |
+283 |     function _assertEscrow(uint256 orderId, uint256 expectedEscrow) internal {
+    |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to view
+   --> TESTS/BaseTest.t.sol:291:5:
+    |
+291 |     function _assertWithdrawable(address tokenAddr, address account, uint256 expectedAmount) internal {
+    |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to view
+   --> TESTS/BaseTest.t.sol:299:5:
+    |
+299 |     function _assertETHBalance(address account, uint256 expectedBalance) internal {
+    |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to view
+   --> TESTS/BaseTest.t.sol:306:5:
+    |
+306 |     function _assertTokenBalance(address account, uint256 expectedBalance) internal {
+    |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to view
+   --> TESTS/unit/EdgeCases.t.sol:343:5:
+    |
+343 |     function test_EdgeCase_GetNonExistentOrder() public {
+    |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Analysing contracts...
+Running tests...
+
+Ran 1 test for script/DeployBaseSepolia.s.sol:DeployBaseSepolia
+[PASS] testToken() (gas: 2660)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 4.19ms (763.42µs CPU time)
+
+Ran 14 tests for TESTS/unit/Settlement.t.sol:SettlementTest
+[PASS] test_Conservation_MultipleOrders() (gas: 618281)
+[PASS] test_Conservation_NoFee_FullAmount() (gas: 370814)
+[PASS] test_Conservation_PartialSettlement() (gas: 454075)
+[PASS] test_Conservation_WithFee_FullAmount() (gas: 266651)
+[PASS] test_Fee_Applied_In_All_Settle_Paths() (gas: 644253)
+[PASS] test_Fee_Bps_Computation() (gas: 252347)
+[PASS] test_Fee_RevertWhen_ExceedsAmount_TODO() (gas: 210)
+[PASS] test_NoFee_NoFeeCharged() (gas: 201828)
+[PASS] test_PullPayment_AggregatedBalance() (gas: 496594)
+[PASS] test_PullPayment_IdempotentWithdraw() (gas: 354738)
+[PASS] test_PullPayment_Withdraw() (gas: 250986)
+[PASS] test_SettleActor_Client_TODO() (gas: 232)
+[PASS] test_SettleActor_Negotiated_TODO() (gas: 211)
+[PASS] test_SettleActor_Timeout_TODO() (gas: 190)
+Suite result: ok. 14 passed; 0 failed; 0 skipped; finished in 13.47ms (7.32ms CPU time)
+
+Ran 19 tests for TESTS/unit/ErrorCodes.t.sol:ErrorCodesTest
+[PASS] test_CancelledState_IsTerminal() (gas: 197708)
+[PASS] test_ErrExpired_ApproveReceipt() (gas: 202911)
+[PASS] test_ErrExpired_RaiseDispute() (gas: 203049)
+[PASS] test_ErrInsufficientBalance_Withdraw_TODO() (gas: 277)
+[PASS] test_ErrInvalidState_AcceptOrder_AlreadyAccepted() (gas: 188109)
+[PASS] test_ErrInvalidState_AfterSettled() (gas: 383807)
+[PASS] test_ErrInvalidState_MarkForfeited_NotTimeout() (gas: 209883)
+[PASS] test_ErrInvalidState_MarkForfeited_WrongState() (gas: 197855)
+[PASS] test_ErrSelfDealing_CreateOrder() (gas: 14476)
+[PASS] test_ErrUnauthorized_ApproveReceipt() (gas: 186557)
+[PASS] test_ErrUnauthorized_CancelOrder() (gas: 188481)
+[PASS] test_ErrUnauthorized_MarkReady() (gas: 186823)
+[PASS] test_ErrZeroAddress_Constructor() (gas: 64690)
+[PASS] test_ErrZeroAmount_CreateOrder() (gas: 142201)
+[PASS] test_ErrZeroAmount_Withdraw() (gas: 19022)
+[PASS] test_ErrorPriority_StateBeforeAuth() (gas: 364977)
+[PASS] test_ForfeitedState_IsTerminal() (gas: 224539)
+[PASS] test_GasComparison_CustomError() (gas: 190422)
+Logs:
+  Gas used for Custom Error: 7662
+
+[PASS] test_SettledState_IsTerminal() (gas: 386239)
+Suite result: ok. 19 passed; 0 failed; 0 skipped; finished in 14.89ms (9.66ms CPU time)
+
+Ran 20 tests for TESTS/unit/ForfeitPool.t.sol:ForfeitPoolTest
+[PASS] testSKIP_ForfeitPool_RevertWhen_NotGovernance() (gas: 277)
+[PASS] test_ForfeitPool_Accumulation() (gas: 536418)
+[PASS] test_ForfeitPool_AnyoneCanTrigger() (gas: 221743)
+[PASS] test_ForfeitPool_AvoidedByNegotiation_TODO() (gas: 188)
+[PASS] test_ForfeitPool_CannotForfeitTwice() (gas: 218384)
+[PASS] test_ForfeitPool_ERC20_SeparatePool() (gas: 214555)
+[PASS] test_ForfeitPool_Event_Forfeited_TODO() (gas: 189)
+[PASS] test_ForfeitPool_Event_ProtocolFeeWithdrawn_TODO() (gas: 254)
+[PASS] test_ForfeitPool_ExactlyAtDisputeTimeout() (gas: 223358)
+[PASS] test_ForfeitPool_GovernanceWithdraw() (gas: 219047)
+[PASS] test_ForfeitPool_IdempotentWithdraw() (gas: 223724)
+[PASS] test_ForfeitPool_InitiallyEmpty() (gas: 8579)
+[PASS] test_ForfeitPool_MarkForfeited_ETH() (gas: 225584)
+[PASS] test_ForfeitPool_NotTriggeredInHappyPath() (gas: 363306)
+[PASS] test_ForfeitPool_ReentrancyProtection_TODO() (gas: 298)
+[PASS] test_ForfeitPool_RevertWhen_DisputeNotTimeout() (gas: 209795)
+[PASS] test_ForfeitPool_RevertWhen_NotDisputing() (gas: 188021)
+[PASS] test_ForfeitPool_RevertWhen_ZeroAmount() (gas: 23655)
+[PASS] test_ForfeitPool_SymmetricDeterrence() (gas: 224694)
+[PASS] test_ForfeitPool_WithdrawReentrancyProtection_TODO() (gas: 277)
+Suite result: ok. 20 passed; 0 failed; 0 skipped; finished in 15.61ms (10.15ms CPU time)
+
+Ran 25 tests for TESTS/unit/EdgeCases.t.sol:EdgeCasesTest
+[PASS] test_EdgeCase_BalanceAggregationMultipleOrders() (gas: 532082)
+[PASS] test_EdgeCase_BlockReorg_TODO() (gas: 298)
+[PASS] test_EdgeCase_ContractAddressAsParty_TODO() (gas: 253)
+[PASS] test_EdgeCase_DepositAfterAccept() (gas: 203851)
+[PASS] test_EdgeCase_DisputeDeadline_ExactBoundary() (gas: 223358)
+[PASS] test_EdgeCase_EventSequence_HappyPath_TODO() (gas: 255)
+[PASS] test_EdgeCase_ExecutionDeadline_ExactBoundary() (gas: 210429)
+[PASS] test_EdgeCase_GasBenchmark_HappyPath() (gas: 353688)
+Logs:
+  Gas used for Happy Path: 384991
+  Gas used for Withdraw: 14791
+
+[PASS] test_EdgeCase_GasBenchmark_MultipleDeposits() (gas: 342071)
+Logs:
+  Gas used for deposit iteration: 0
+  Gas amount: 33360
+  Gas used for deposit iteration: 1
+  Gas amount: 13460
+  Gas used for deposit iteration: 2
+  Gas amount: 13460
+  Gas used for deposit iteration: 3
+  Gas amount: 13460
+  Gas used for deposit iteration: 4
+  Gas amount: 13460
+  Gas used for deposit iteration: 5
+  Gas amount: 13460
+  Gas used for deposit iteration: 6
+  Gas amount: 13460
+  Gas used for deposit iteration: 7
+  Gas amount: 13460
+  Gas used for deposit iteration: 8
+  Gas amount: 13460
+  Gas used for deposit iteration: 9
+  Gas amount: 13460
+
+[PASS] test_EdgeCase_GetNonExistentOrder() (gas: 27809)
+[PASS] test_EdgeCase_IncrementalDeposit() (gas: 197912)
+[PASS] test_EdgeCase_MaximalAmount() (gas: 211878)
+[PASS] test_EdgeCase_MaximalTimeWindows() (gas: 212612)
+[PASS] test_EdgeCase_MinimalAmount() (gas: 211105)
+[PASS] test_EdgeCase_MinimalTimeWindows() (gas: 212832)
+[PASS] test_EdgeCase_MultipleOrdersSameParties() (gas: 908058)
+[PASS] test_EdgeCase_PauseResume_TODO() (gas: 210)
+[PASS] test_EdgeCase_RaceCancellation_TODO() (gas: 207559)
+[PASS] test_EdgeCase_RaceMarkReadyVsCancel() (gas: 201876)
+[PASS] test_EdgeCase_RaceSettlement() (gas: 226615)
+[PASS] test_EdgeCase_ReviewDeadline_ExactBoundary() (gas: 217372)
+[PASS] test_EdgeCase_TimeOverflow() (gas: 184084)
+[PASS] test_EdgeCase_UpgradeMigration_TODO() (gas: 211)
+[PASS] test_EdgeCase_WithdrawableOfNonExistentUser() (gas: 9114)
+[PASS] test_EdgeCase_ZeroFee_NoFeeCredit() (gas: 201605)
+Suite result: ok. 25 passed; 0 failed; 0 skipped; finished in 18.02ms (13.18ms CPU time)
+
+Ran 14 tests for TESTS/unit/GuardFixes.t.sol:GuardFixesTest
+[PASS] test_Combined_TimeoutCancelAndAutoSettle() (gas: 414691)
+[PASS] test_E6_CancelOrder_RevertWhen_AlreadyReady() (gas: 211243)
+[PASS] test_E6_CancelOrder_RevertWhen_NotTimeout() (gas: 205228)
+[PASS] test_E6_CancelOrder_Success_AfterTimeout() (gas: 213617)
+[PASS] test_E6_CancelOrder_Success_ExactlyAtTimeout() (gas: 213018)
+[PASS] test_E7_CancelOrder_Success_ContractorAnytime() (gas: 202728)
+[PASS] test_INV6_ApproveReceipt_RevertWhen_ReviewingTimeout() (gas: 212251)
+[PASS] test_INV6_ApproveReceipt_Success_FromExecuting() (gas: 201881)
+[PASS] test_INV6_ApproveReceipt_Success_WithinReviewPeriod() (gas: 220331)
+[PASS] test_INV6_ExactlyAtReviewTimeout() (gas: 202713)
+[PASS] test_INV6_PreventDelayAttack() (gas: 226439)
+[PASS] test_INV6_RaiseDispute_RevertWhen_ReviewingTimeout() (gas: 212391)
+[PASS] test_INV6_RaiseDispute_Success_FromExecuting() (gas: 195420)
+[PASS] test_INV6_RaiseDispute_Success_WithinReviewPeriod() (gas: 210513)
+Suite result: ok. 14 passed; 0 failed; 0 skipped; finished in 18.16ms (13.05ms CPU time)
+
+Ran 31 tests for TESTS/unit/StateMachine.t.sol:StateMachineTest
+[PASS] test_DisputePath_FullCycle() (gas: 230606)
+[PASS] test_E10_RaiseDispute_FromReviewing() (gas: 201435)
+[PASS] test_E11_CancelOrder_FromReviewing() (gas: 208362)
+[PASS] test_E11_CancelOrder_RevertWhen_ClientTries() (gas: 192159)
+[PASS] test_E13_TimeoutForfeit_RevertWhen_NotTimeout() (gas: 200757)
+[PASS] test_E13_TimeoutForfeit_RevertWhen_WrongState() (gas: 193734)
+[PASS] test_E13_TimeoutForfeit_Success() (gas: 223565)
+[PASS] test_E1_AcceptOrder_RevertWhen_NotContractor() (gas: 181318)
+[PASS] test_E1_AcceptOrder_RevertWhen_WrongState() (gas: 186110)
+[PASS] test_E1_AcceptOrder_Success() (gas: 216276)
+[PASS] test_E2_CancelOrder_RevertWhen_NotClient() (gas: 183431)
+[PASS] test_E2_CancelOrder_Success() (gas: 206565)
+[PASS] test_E3_MarkReady_RevertWhen_AfterDueTimeout() (gas: 196459)
+[PASS] test_E3_MarkReady_RevertWhen_ExactlyAtDueDeadline() (gas: 196306)
+[PASS] test_E3_MarkReady_RevertWhen_NotContractor() (gas: 186847)
+[PASS] test_E3_MarkReady_RevertWhen_WrongState() (gas: 181059)
+[PASS] test_E3_MarkReady_Success() (gas: 203961)
+[PASS] test_E4_ApproveReceipt_FromExecuting() (gas: 204447)
+[PASS] test_E4_ApproveReceipt_RevertWhen_NotClient() (gas: 186602)
+[PASS] test_E5_RaiseDispute_ByClient() (gas: 204401)
+[PASS] test_E5_RaiseDispute_ByContractor() (gas: 195606)
+[PASS] test_E5_RaiseDispute_RevertWhen_AfterDueTimeout() (gas: 203341)
+[PASS] test_E5_RaiseDispute_RevertWhen_ExactlyAtDueDeadline() (gas: 196547)
+[PASS] test_E5_RaiseDispute_RevertWhen_ThirdParty() (gas: 189587)
+[PASS] test_E6_CancelOrder_ByClient_FromExecuting() (gas: 213152)
+[PASS] test_E7_CancelOrder_ByContractor_FromExecuting() (gas: 202750)
+[PASS] test_E8_ApproveReceipt_FromReviewing() (gas: 211143)
+[PASS] test_E9_TimeoutSettle_RevertWhen_NotTimeout() (gas: 194410)
+[PASS] test_E9_TimeoutSettle_RevertWhen_WrongState() (gas: 188114)
+[PASS] test_E9_TimeoutSettle_Success() (gas: 222045)
+[PASS] test_HappyPath_FullCycle() (gas: 233579)
+Suite result: ok. 31 passed; 0 failed; 0 skipped; finished in 10.69ms (9.64ms CPU time)
+
+Ran 17 tests for TESTS/unit/Signatures.t.sol:SignaturesTest
+[PASS] testSKIP_E12_Event_AmountSettled() (gas: 209)
+[PASS] test_E12_Nonce_OnlyProposerConsumed() (gas: 308406)
+[PASS] test_E12_RevertWhen_AmountExceedsEscrow() (gas: 233591)
+[PASS] test_E12_RevertWhen_BadSignature() (gas: 262207)
+[PASS] test_E12_RevertWhen_CrossChainReplay() (gas: 4694455)
+[PASS] test_E12_RevertWhen_CrossOrderReplay() (gas: 445714)
+[PASS] test_E12_RevertWhen_DeadlineExpired() (gas: 234072)
+[PASS] test_E12_RevertWhen_DisputeTimeout() (gas: 232027)
+[PASS] test_E12_RevertWhen_ExactlyAtDeadline() (gas: 233997)
+[PASS] test_E12_RevertWhen_InvalidNonce() (gas: 234443)
+[PASS] test_E12_RevertWhen_InvalidProposerAcceptor() (gas: 227663)
+[PASS] test_E12_RevertWhen_NotDisputing() (gas: 212196)
+[PASS] test_E12_RevertWhen_ReplayAttack_SameOrder() (gas: 308385)
+[PASS] test_E12_SettleWithSigs_ClientProposes() (gas: 313670)
+[PASS] test_E12_SettleWithSigs_ContractorProposes() (gas: 308563)
+[PASS] test_E12_SettleWithSigs_FullPayment() (gas: 280148)
+[PASS] test_E12_SettleWithSigs_FullRefund() (gas: 280424)
+Suite result: ok. 17 passed; 0 failed; 0 skipped; finished in 819.59ms (29.05ms CPU time)
+
+Ran 11 tests for TESTS/unit/Invariants.t.sol:InvariantsTest
+[PASS] test_INV10_PullSemantics_ERC20() (gas: 251540)
+[PASS] test_INV10_PullSemantics_NoAutomaticTransfer() (gas: 200011)
+[PASS] test_INV11_AnchorImmutability_CancelledPath() (gas: 213072)
+[PASS] test_INV11_AnchorImmutability_ERC20Token() (gas: 288244)
+[PASS] test_INV11_AnchorImmutability_SettledPath() (gas: 245270)
+[PASS] test_INV11_AnchorImmutability_ThroughAllStates() (gas: 265112)
+[PASS] test_INV4_SingleCreditPerOrder_ApproveReceipt() (gas: 220710)
+[PASS] test_INV4_SingleCreditPerOrder_ForfeitedOrderImmutable() (gas: 235561)
+[PASS] test_INV8_GlobalBalanceEquality_AfterGovernanceWithdrawal() (gas: 270182)
+[PASS] test_INV8_GlobalBalanceEquality_ERC20() (gas: 508499)
+[PASS] test_INV8_GlobalBalanceEquality_MultipleOrders() (gas: 1124191)
+Suite result: ok. 11 passed; 0 failed; 0 skipped; finished in 1.75s (9.28ms CPU time)
+
+Ran 10 tests for TESTS/invariant/InvariantTest.t.sol:InvariantTest
+[PASS] invariant_AnchorsNeverZero() (runs: 256, calls: 3840, reverts: 0)
+
+╭----------+-----------------------+-------+---------+----------╮
+| Contract | Selector              | Calls | Reverts | Discards |
++===============================================================+
+| Handler  | acceptOrder           | 343   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | approveReceipt        | 326   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | cancelOrder           | 382   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositERC20 | 353   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositETH   | 342   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | markReady             | 363   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | raiseDispute          | 344   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutForfeit        | 340   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutSettle         | 324   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | warpTime              | 366   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | withdraw              | 357   | 0       | 0        |
+╰----------+-----------------------+-------+---------+----------╯
+
+Logs:
+  Bound result 21089
+  Bound result 1446757
+  Bound result 289278
+
+[PASS] invariant_CallSummary() (runs: 256, calls: 3840, reverts: 0)
+
+╭----------+-----------------------+-------+---------+----------╮
+| Contract | Selector              | Calls | Reverts | Discards |
++===============================================================+
+| Handler  | acceptOrder           | 343   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | approveReceipt        | 326   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | cancelOrder           | 382   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositERC20 | 353   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositETH   | 342   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | markReady             | 363   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | raiseDispute          | 344   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutForfeit        | 340   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutSettle         | 324   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | warpTime              | 366   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | withdraw              | 357   | 0       | 0        |
+╰----------+-----------------------+-------+---------+----------╯
+
+Logs:
+  Bound result 21190
+  Bound result 1446757
+  Bound result 289278
+  
+=== Invariant Test Statistics ===
+  Orders created (ETH): 0
+  Orders created (ERC20): 0
+  acceptOrder calls: 0
+  markReady calls: 0
+  approveReceipt calls: 0
+  raiseDispute calls: 0
+  cancelOrder calls: 0
+  timeoutSettle calls: 0
+  timeoutForfeit calls: 0
+  withdraw calls: 0
+  
+Ghost variables:
+  ETH deposited: 0
+  ETH withdrawn: 0
+  Tokens deposited: 0
+  Tokens withdrawn: 0
+  
+Total orders created: 0
+
+[PASS] invariant_GlobalBalanceEquality_ERC20() (runs: 256, calls: 3840, reverts: 0)
+
+╭----------+-----------------------+-------+---------+----------╮
+| Contract | Selector              | Calls | Reverts | Discards |
++===============================================================+
+| Handler  | acceptOrder           | 343   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | approveReceipt        | 326   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | cancelOrder           | 382   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositERC20 | 353   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositETH   | 342   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | markReady             | 363   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | raiseDispute          | 344   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutForfeit        | 340   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutSettle         | 324   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | warpTime              | 366   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | withdraw              | 357   | 0       | 0        |
+╰----------+-----------------------+-------+---------+----------╯
+
+Logs:
+  Bound result 21164
+  Bound result 1446757
+  Bound result 289278
+
+[PASS] invariant_GlobalBalanceEquality_ETH() (runs: 256, calls: 3840, reverts: 0)
+
+╭----------+-----------------------+-------+---------+----------╮
+| Contract | Selector              | Calls | Reverts | Discards |
++===============================================================+
+| Handler  | acceptOrder           | 343   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | approveReceipt        | 326   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | cancelOrder           | 382   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositERC20 | 353   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositETH   | 342   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | markReady             | 363   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | raiseDispute          | 344   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutForfeit        | 340   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutSettle         | 324   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | warpTime              | 366   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | withdraw              | 357   | 0       | 0        |
+╰----------+-----------------------+-------+---------+----------╯
+
+Logs:
+  Bound result 21164
+  Bound result 1446757
+  Bound result 289278
+
+[PASS] invariant_NoSelfDealing() (runs: 256, calls: 3840, reverts: 0)
+
+╭----------+-----------------------+-------+---------+----------╮
+| Contract | Selector              | Calls | Reverts | Discards |
++===============================================================+
+| Handler  | acceptOrder           | 343   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | approveReceipt        | 326   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | cancelOrder           | 382   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositERC20 | 353   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositETH   | 342   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | markReady             | 363   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | raiseDispute          | 344   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutForfeit        | 340   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutSettle         | 324   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | warpTime              | 366   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | withdraw              | 357   | 0       | 0        |
+╰----------+-----------------------+-------+---------+----------╯
+
+Logs:
+  Bound result 21089
+  Bound result 1446757
+  Bound result 289278
+
+[PASS] invariant_NonNegativeBalances() (runs: 256, calls: 3840, reverts: 0)
+
+╭----------+-----------------------+-------+---------+----------╮
+| Contract | Selector              | Calls | Reverts | Discards |
++===============================================================+
+| Handler  | acceptOrder           | 343   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | approveReceipt        | 326   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | cancelOrder           | 382   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositERC20 | 353   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositETH   | 342   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | markReady             | 363   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | raiseDispute          | 344   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutForfeit        | 340   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutSettle         | 324   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | warpTime              | 366   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | withdraw              | 357   | 0       | 0        |
+╰----------+-----------------------+-------+---------+----------╯
+
+Logs:
+  Bound result 21164
+  Bound result 1446757
+  Bound result 289278
+
+[PASS] invariant_PullSemanticsOnly_ERC20() (runs: 256, calls: 3840, reverts: 0)
+
+╭----------+-----------------------+-------+---------+----------╮
+| Contract | Selector              | Calls | Reverts | Discards |
++===============================================================+
+| Handler  | acceptOrder           | 343   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | approveReceipt        | 326   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | cancelOrder           | 382   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositERC20 | 353   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositETH   | 342   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | markReady             | 363   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | raiseDispute          | 344   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutForfeit        | 340   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutSettle         | 324   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | warpTime              | 366   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | withdraw              | 357   | 0       | 0        |
+╰----------+-----------------------+-------+---------+----------╯
+
+Logs:
+  Bound result 21089
+  Bound result 1446757
+  Bound result 289278
+
+[PASS] invariant_PullSemanticsOnly_ETH() (runs: 256, calls: 3840, reverts: 0)
+
+╭----------+-----------------------+-------+---------+----------╮
+| Contract | Selector              | Calls | Reverts | Discards |
++===============================================================+
+| Handler  | acceptOrder           | 343   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | approveReceipt        | 326   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | cancelOrder           | 382   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositERC20 | 353   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositETH   | 342   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | markReady             | 363   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | raiseDispute          | 344   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutForfeit        | 340   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutSettle         | 324   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | warpTime              | 366   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | withdraw              | 357   | 0       | 0        |
+╰----------+-----------------------+-------+---------+----------╯
+
+Logs:
+  Bound result 21089
+  Bound result 1446757
+  Bound result 289278
+
+[PASS] invariant_SingleCreditPerOrder() (runs: 256, calls: 3840, reverts: 0)
+
+╭----------+-----------------------+-------+---------+----------╮
+| Contract | Selector              | Calls | Reverts | Discards |
++===============================================================+
+| Handler  | acceptOrder           | 343   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | approveReceipt        | 326   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | cancelOrder           | 382   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositERC20 | 353   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositETH   | 342   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | markReady             | 363   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | raiseDispute          | 344   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutForfeit        | 340   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutSettle         | 324   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | warpTime              | 366   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | withdraw              | 357   | 0       | 0        |
+╰----------+-----------------------+-------+---------+----------╯
+
+Logs:
+  Bound result 21089
+  Bound result 1446757
+  Bound result 289278
+
+[PASS] invariant_TerminalStatesFrozen() (runs: 256, calls: 3840, reverts: 0)
+
+╭----------+-----------------------+-------+---------+----------╮
+| Contract | Selector              | Calls | Reverts | Discards |
++===============================================================+
+| Handler  | acceptOrder           | 343   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | approveReceipt        | 326   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | cancelOrder           | 382   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositERC20 | 353   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | createAndDepositETH   | 342   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | markReady             | 363   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | raiseDispute          | 344   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutForfeit        | 340   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | timeoutSettle         | 324   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | warpTime              | 366   | 0       | 0        |
+|----------+-----------------------+-------+---------+----------|
+| Handler  | withdraw              | 357   | 0       | 0        |
+╰----------+-----------------------+-------+---------+----------╯
+
+Logs:
+  Bound result 21089
+  Bound result 1446757
+  Bound result 289278
+
+Suite result: ok. 10 passed; 0 failed; 0 skipped; finished in 1.75s (9.28s CPU time)
+
+Ran 10 test suites in 1.76s (4.42s CPU time): 162 tests passed, 0 failed, 0 skipped (162 total tests)
+
+╭----------------------------------------+-------------------+-------------------+-----------------+-----------------╮
+| File                                   | % Lines           | % Statements      | % Branches      | % Funcs         |
++====================================================================================================================+
+| CONTRACTS/core/NESPCore.sol            | 89.67% (191/213)  | 85.87% (243/283)  | 70.11% (61/87)  | 88.46% (23/26)  |
+|----------------------------------------+-------------------+-------------------+-----------------+-----------------|
+| CONTRACTS/mocks/AlwaysYesValidator.sol | 100.00% (1/1)     | 100.00% (1/1)     | 100.00% (0/0)   | 100.00% (1/1)   |
+|----------------------------------------+-------------------+-------------------+-----------------+-----------------|
+| CONTRACTS/mocks/MockERC20.sol          | 100.00% (1/1)     | 100.00% (1/1)     | 100.00% (0/0)   | 100.00% (1/1)   |
+|----------------------------------------+-------------------+-------------------+-----------------+-----------------|
+| TESTS/BaseTest.t.sol                   | 84.88% (73/86)    | 87.50% (63/72)    | 100.00% (0/0)   | 77.78% (14/18)  |
+|----------------------------------------+-------------------+-------------------+-----------------+-----------------|
+| TESTS/invariant/Handler.sol            | 100.00% (130/130) | 100.00% (168/168) | 100.00% (33/33) | 100.00% (16/16) |
+|----------------------------------------+-------------------+-------------------+-----------------+-----------------|
+| script/DeployBaseSepolia.s.sol         | 0.00% (0/39)      | 0.00% (0/40)      | 0.00% (0/2)     | 0.00% (0/2)     |
+|----------------------------------------+-------------------+-------------------+-----------------+-----------------|
+| Total                                  | 84.26% (396/470)  | 84.25% (476/565)  | 77.05% (94/122) | 85.94% (55/64)  |
+╰----------------------------------------+-------------------+-------------------+-----------------+-----------------╯
