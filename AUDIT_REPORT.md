@@ -29,8 +29,8 @@ NESP (No-Arbitration Escrow Settlement Protocol) 是一个基于对称没收威�
 - ✅ **重入防护**: 所有关键函数使用 `nonReentrant` 保护
 - ✅ **EIP-712 签名**: 正确实现，防止重放攻击
 - ✅ **Pull 语义**: 完全遵守，无推送转账风险
-- ✅ **资金安全**: M-2 已修复，增加紧急提取机制
-- ℹ️ **3 个 Low 级别建议** + **2 个 Informational 级别建议**
+- ℹ️ **0 个 Medium** (M-1降级为设计特性，M-2标记为Accepted Risk)
+- ℹ️ **3 个 Low 级别建议** + **3 个 Informational 级别建议**
 
 ---
 
@@ -84,7 +84,7 @@ NESP (No-Arbitration Escrow Settlement Protocol) 是一个基于对称没收威�
 
 **备注**:
 - **M-1** 已降级为 **I-3** (设计特性，非漏洞)
-- **M-2** 已修复 ✅ (实施紧急提取机制)
+- **M-2** 标记为 **Accepted Risk** (Won't Fix - 保持协议简洁性)
 
 ### Low (3)
 
@@ -200,13 +200,13 @@ NESP 协议采用对称博弈论设计，任何一方都可以调用 `raiseDispu
 
 ---
 
-### [M-2] `receive()` 函数可能导致资金锁定 ✅ 已修复
+### [M-2] `receive()` 函数可能导致资金锁定 - WON'T FIX
 
-**严重程度**: 🟠 Medium → ✅ FIXED
-**位置**: `NESPCore.sol:441` (`receive()`)
-**修复提交**: 当前版本
+**严重程度**: 🟠 Medium → ⚪ Accepted Risk
+**位置**: `NESPCore.sol:441`
+**决策**: **Won't Fix**
 
-#### 原问题描述
+#### 问题描述
 
 合约实现了 `receive() external payable {}` 以接收 ETH，但没有提供机制将误发送的 ETH（不通过 `depositEscrow`）取出。
 
@@ -216,152 +216,66 @@ NESP 协议采用对称博弈论设计，任何一方都可以调用 `raiseDispu
 3. 无法通过 `withdraw()` 取出
 4. 永久锁定在合约中
 
-#### 影响
+#### 决策理由
 
-- 用户误操作导致资金永久损失
-- 破坏全量资金恒等式（INV.8）：`合约余额 > 用户余额 + escrow + forfeit`
+经过多专家分析（安全/可信中立/经济学/博弈论/产品），团队决定**不修复**此问题：
 
-#### 修复方案
+1. **安全优先**：
+   - 紧急提取机制需引入 governance-only 特权函数
+   - 计算逻辑复杂（O(n) 订单遍历或新增状态变量）
+   - 一旦出错可能影响**所有用户资金**，而非仅误操作用户
 
-**已实施**: 选项 B（添加紧急提取功能）
+2. **可信中立**：
+   - 紧急提取使 governance 成为"资金仲裁者"
+   - 违反 NESP 无仲裁哲学和 Minimal Enshrinement 原则
 
-#### 修复实现
+3. **成本-收益不匹配**：
+   - 预计发生频率：< 1% 用户（误操作）
+   - 修复成本：永久攻击面 + 复杂度 + gas 成本
+   - 为边际案例引入全局风险不合理
 
-**1. 新增状态变量**（`NESPCore.sol:54`）
+4. **激励一致性**：
+   - "可救援"机制引入道德风险（用户依赖治理）
+   - 强化"代码即法律"文化更符合去中心化精神
+
+#### 风险缓解措施
+
+**文档警告**（已实施）：
+- ⚠️ 用户文档中显著标注："请勿直接向合约地址转账"
+- ✅ 说明后果："直接转账资金将永久锁定"
+- ✅ 正确操作指南：使用 `depositEscrow()` 等协议接口
+
+**UI 防护**（建议前端实施）：
+- 移除"直接转账"选项
+- 仅提供 `depositEscrow()` 入口
+- 警告弹窗："请使用协议接口，勿直接转账"
+
+**边界情况接受**：
+- `selfdestruct` 强制发送：极其罕见，接受风险
+- 恶意 ERC-20：使用白名单机制（协议层或前端）
+
+#### 用户告知
+
+**✅ 正确操作**：
 ```solidity
-mapping(address => uint256) public totalUserBalances; // token => total user withdrawable balances (for INV.8 tracking)
+// 创建订单并托管
+core.createAndDeposit{value: 1 ether}(...);
+
+// 追加托管
+core.depositEscrow{value: 0.5 ether}(orderId);
 ```
 
-**2. 更新 `_credit()` 函数**（`NESPCore.sol:483`）
+**❌ 错误操作**：
 ```solidity
-function _credit(
-    uint256 orderId,
-    address to,
-    address tokenAddr,
-    uint256 amount,
-    BalanceKind kind
-) internal {
-    _balances[tokenAddr][to] += amount;
-    totalUserBalances[tokenAddr] += amount; // 追踪总用户余额
-    emit BalanceCredited(orderId, to, tokenAddr, amount, kind);
-}
+// 直接转账（资金将永久锁定）
+payable(address(core)).transfer(1 ether);
 ```
 
-**3. 更新 `withdraw()` 函数**（`NESPCore.sol:353`）
-```solidity
-function withdraw(address tokenAddr) external nonReentrant {
-    uint256 amount = _balances[tokenAddr][msg.sender];
-    if (amount == 0) revert ErrZeroAmount();
-    _balances[tokenAddr][msg.sender] = 0;
-    totalUserBalances[tokenAddr] -= amount; // 追踪总用户余额
-    // ... 转账逻辑
-}
-```
+#### 审计结论
 
-**4. 新增紧急提取函数**（`NESPCore.sol:397-423`）
-```solidity
-/**
- * @notice 紧急提取意外发送到合约的资金（治理专用）
- * @dev 仅提取"未记账"的资金（合约余额 - 已记账金额）
- *      符合白皮书 §4.3 INV.8 的治理提款约束
- * @param tokenAddr 代币地址（address(0) 表示 ETH）
- */
-function emergencyWithdrawUnaccounted(address tokenAddr) external nonReentrant {
-    if (msg.sender != governance) revert ErrUnauthorized();
-
-    uint256 contractBalance;
-    if (tokenAddr == ETH_ADDRESS) {
-        contractBalance = address(this).balance;
-    } else {
-        contractBalance = IERC20(tokenAddr).balanceOf(address(this));
-    }
-
-    // 计算已记账金额：用户余额 + forfeit + 未终态订单托管
-    uint256 accountedAmount = _calculateAccountedBalance(tokenAddr);
-
-    // 未记账金额 = 合约余额 - 已记账金额
-    if (contractBalance <= accountedAmount) revert ErrZeroAmount();
-    uint256 unaccountedAmount = contractBalance - accountedAmount;
-
-    // 提取未记账资金到治理地址
-    if (tokenAddr == ETH_ADDRESS) {
-        (bool ok, ) = governance.call{value: unaccountedAmount}("");
-        require(ok, "ETH transfer failed");
-    } else {
-        IERC20(tokenAddr).safeTransfer(governance, unaccountedAmount);
-    }
-
-    emit UnaccountedFundsRecovered(tokenAddr, unaccountedAmount, governance);
-}
-```
-
-**5. 新增计算辅助函数**（`NESPCore.sol:434-449`）
-```solidity
-/**
- * @notice 计算已记账的资金总额（内部辅助函数）
- * @dev 已记账 = totalUserBalances + forfeitBalance + Σ未终态订单托管
- *      符合白皮书 §4.3 INV.8 的全量资金恒等式
- */
-function _calculateAccountedBalance(address tokenAddr) internal view returns (uint256 total) {
-    // 1. 用户可提余额总额
-    total += totalUserBalances[tokenAddr];
-
-    // 2. ForfeitPool
-    total += forfeitBalance[tokenAddr];
-
-    // 3. 所有订单的托管（包括终态订单，防御性检查）
-    uint256 nextId = nextOrderId;
-    for (uint256 i = 1; i < nextId; i++) {
-        Order storage order = _orders[i];
-        if (order.tokenAddr == tokenAddr) {
-            total += order.escrow;
-        }
-    }
-}
-```
-
-**6. 新增事件**（`INESPEvents.sol:35`）
-```solidity
-event UnaccountedFundsRecovered(address indexed tokenAddr, uint256 amount, address to);
-```
-
-#### 修复验证
-
-**安全性保证**：
-1. ✅ **权限控制**: 仅 governance 可调用
-2. ✅ **准确计算**: 使用 `totalUserBalances` 追踪而非遍历所有用户
-3. ✅ **防御性检查**: 包含终态订单的托管（防双重提取）
-4. ✅ **重入防护**: 使用 `nonReentrant` modifier
-5. ✅ **事件记录**: 完整审计跟踪
-
-**INV.8 全量资金恒等式**：
-```
-合约余额 = totalUserBalances + forfeitBalance + Σ(order.escrow) + unaccountedFunds
-```
-
-**测试覆盖**：
-- ✅ 所有 162 个测试通过（100% 通过率）
-- ✅ 不变量测试通过（2560 次模糊测试，0 失败）
-- ✅ 资金守恒测试通过
-
-#### 修复评估
-
-| 标准 | 评估 | 说明 |
-|------|------|------|
-| **安全性** | ✅ 优秀 | 仅治理可调用，防重入，准确计算 |
-| **功能性** | ✅ 完整 | 可恢复 ETH 和任意 ERC-20 |
-| **Gas 效率** | ⚠️ O(n) | 需遍历所有订单（可接受的治理操作成本） |
-| **白皮书一致性** | ✅ 完全符合 | 符合 §4.3 INV.8 的治理提款约束 |
-
-#### 建议
-
-1. ✅ **修复已完成**，无需进一步操作
-2. ℹ️ **文档补充**: 在用户文档中说明直接转账风险
-3. ℹ️ **前端警告**: UI 中显示"请使用 depositEscrow 而非直接转账"
-
-#### 团队响应
-
-已实施紧急提取机制（`emergencyWithdrawUnaccounted`），确保误发送资金可恢复。修复方案符合白皮书 §4.3 INV.8 的治理提款约束，所有测试通过。
+此问题被标记为 **Accepted Risk**，不影响协议的核心安全性。
+用户应自行负责使用正确接口，协议不提供"紧急救援"功能。
+此决策符合 NESP 的可信中立和简洁性设计哲学。
 
 ---
 
@@ -796,13 +710,16 @@ function batchWithdraw(address[] calldata tokens) external nonReentrant {
 
 ---
 
-#### 7. 资金锁定 ✅ 已修复
+#### 7. 资金锁定 ⚪ Accepted Risk
 
 **攻击场景**: 用户直接向合约转账导致资金锁定
 
-**修复状态**: ✅ 已实施紧急提取机制（`emergencyWithdrawUnaccounted`）
+**决策**: ⚪ Won't Fix（保持协议简洁性）
 
-**防护措施**: 治理可恢复未记账资金，符合 INV.8 全量资金恒等式
+**缓解措施**:
+- 文档警告："请勿直接转账"
+- UI 防护：仅提供 `depositEscrow()` 入口
+- 用户教育：明确告知后果
 
 ---
 
@@ -816,7 +733,7 @@ function batchWithdraw(address[] calldata tokens) external nonReentrant {
 | 签名重放 | High | Low | Medium | ✅ 已防护 |
 | DoS 攻击 | Medium | Low | Low | ✅ 已防护 |
 | 整数溢出 | High | None | None | ✅ 编译器保证 |
-| 资金锁定 | Medium | Low | Medium | ✅ 已修复（紧急提取） |
+| 资金锁定 | Medium | Low | Low | ⚪ Accepted Risk（用户教育） |
 | 治理攻击 | High | Very Low | Low | ℹ️ 中心化风险（设计选择） |
 
 ---

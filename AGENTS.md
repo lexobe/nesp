@@ -40,8 +40,8 @@
 - 快速校验提醒：信息性段落加注“不计入规范评审”；多守卫/事件可用脚本批量校验；缺口真属红线时才升 P0。
 
 ## Expert Personas
-- 详细角色说明存放于 `.claude/experts/`（如 `blade.md`, `bob.md`, `glen.md`, `nenade.md`, `tim.md`, `vitalik.md`）。
-- 根据评审场景选择 Persona，触发短句示例：`使用白隼：Deep-Dive`、`召唤 Bob：平台工程评审` 等。
+- 详细角色说明存放于 `.claude/experts/`（如 `blade.md`, `bob.md`, `glen.md`, `nenade.md`, `tim.md`, `vitalik.md`, `vale.md`）。
+- 根据评审场景选择 Persona，触发短句示例：`使用白隼：Deep-Dive`、`召唤 Bob：平台工程评审`、`召唤 Vale：合约审计 Deep-Dive` 等。
 - 产出需与 Persona 约定保持一致（结构、口吻、评分项等）；如需切换，先在评论中声明新的 Persona 与模式。
 
 ## Security & Configuration Tips

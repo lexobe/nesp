@@ -51,7 +51,6 @@ contract NESPCore is INESPEvents {
     mapping(address => mapping(address => uint256)) internal _balances; // token => user => amount
     mapping(address => uint256) public forfeitBalance; // token => amount
     mapping(uint256 => mapping(address => uint256)) public nonces; // orderId => signer => nonce
-    mapping(address => uint256) public totalUserBalances; // token => total user withdrawable balances (for INV.8 tracking)
 
     // EIP-712
     bytes32 public immutable DOMAIN_SEPARATOR;
@@ -350,7 +349,6 @@ contract NESPCore is INESPEvents {
         uint256 amount = _balances[tokenAddr][msg.sender];
         if (amount == 0) revert ErrZeroAmount();
         _balances[tokenAddr][msg.sender] = 0;
-        totalUserBalances[tokenAddr] -= amount; // Track total for INV.8
         if (tokenAddr == ETH_ADDRESS) {
             (bool ok, ) = msg.sender.call{value: amount}("");
             require(ok, "ETH transfer failed");
@@ -390,64 +388,6 @@ contract NESPCore is INESPEvents {
         emit ProtocolFeeWithdrawn(tokenAddr, to, amount, msg.sender);
     }
 
-    /**
-     * @notice 紧急提取意外发送到合约的资金（治理专用）
-     * @dev 仅提取"未记账"的资金（合约余额 - 已记账金额）
-     *      符合白皮书 §4.3 INV.8 的治理提款约束
-     * @param tokenAddr 代币地址（address(0) 表示 ETH）
-     */
-    function emergencyWithdrawUnaccounted(address tokenAddr) external nonReentrant {
-        if (msg.sender != governance) revert ErrUnauthorized();
-
-        uint256 contractBalance;
-        if (tokenAddr == ETH_ADDRESS) {
-            contractBalance = address(this).balance;
-        } else {
-            contractBalance = IERC20(tokenAddr).balanceOf(address(this));
-        }
-
-        // 计算已记账金额：用户余额 + forfeit + 未终态订单托管
-        uint256 accountedAmount = _calculateAccountedBalance(tokenAddr);
-
-        // 未记账金额 = 合约余额 - 已记账金额
-        if (contractBalance <= accountedAmount) revert ErrZeroAmount();
-        uint256 unaccountedAmount = contractBalance - accountedAmount;
-
-        // 提取未记账资金到治理地址
-        if (tokenAddr == ETH_ADDRESS) {
-            (bool ok, ) = governance.call{value: unaccountedAmount}("");
-            require(ok, "ETH transfer failed");
-        } else {
-            IERC20(tokenAddr).safeTransfer(governance, unaccountedAmount);
-        }
-
-        emit UnaccountedFundsRecovered(tokenAddr, unaccountedAmount, governance);
-    }
-
-    /**
-     * @notice 计算已记账的资金总额（内部辅助函数）
-     * @dev 已记账 = totalUserBalances + forfeitBalance + Σ未终态订单托管
-     *      符合白皮书 §4.3 INV.8 的全量资金恒等式
-     * @param tokenAddr 代币地址
-     * @return total 已记账总额
-     */
-    function _calculateAccountedBalance(address tokenAddr) internal view returns (uint256 total) {
-        // 1. 用户可提余额总额（通过状态变量跟踪）
-        total += totalUserBalances[tokenAddr];
-
-        // 2. ForfeitPool
-        total += forfeitBalance[tokenAddr];
-
-        // 3. 所有订单的托管（包括终态订单，防御性检查）
-        uint256 nextId = nextOrderId;
-        for (uint256 i = 1; i < nextId; i++) {
-            Order storage order = _orders[i];
-            if (order.tokenAddr == tokenAddr) {
-                total += order.escrow;
-            }
-        }
-    }
-
     // Internal helpers
     function _settle(uint256 orderId, uint256 amountToSeller, SettleActor actor) internal {
         Order storage order = _orders[orderId];
@@ -477,7 +417,6 @@ contract NESPCore is INESPEvents {
         BalanceKind kind
     ) internal {
         _balances[tokenAddr][to] += amount;
-        totalUserBalances[tokenAddr] += amount; // Track total for INV.8
         emit BalanceCredited(orderId, to, tokenAddr, amount, kind);
     }
 
