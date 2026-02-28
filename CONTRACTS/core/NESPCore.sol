@@ -24,6 +24,8 @@ contract NESPCore is INESPEvents {
     error ErrInsufficientForfeit();
     error ErrZeroAddress();
     error ErrSelfDealing();
+    error ErrPaused();
+    error ErrTimelockNotReady();
 
     // Reentrancy guard
     uint256 private _locked = 1;
@@ -46,6 +48,11 @@ contract NESPCore is INESPEvents {
 
     // Storage
     address public governance;
+    address public pendingGovernance;
+    bool public paused;
+    bool public pendingPause;
+    uint256 public pauseEta;
+    uint256 public constant PAUSE_DELAY = 1 days;
     address public feeValidator; // global fee validator (optional)
     uint256 public nextOrderId;
     mapping(uint256 => Order) internal _orders;
@@ -102,6 +109,7 @@ contract NESPCore is INESPEvents {
         address feeRecipient,
         uint16 feeBps
     ) internal returns (uint256 orderId) {
+        if (paused) revert ErrPaused();
         if (contractor == address(0)) revert ErrZeroAddress();
         if (contractor == msg.sender) revert ErrSelfDealing();
 
@@ -153,6 +161,7 @@ contract NESPCore is INESPEvents {
     }
 
     function _depositEscrow(uint256 orderId, uint256 amount, address from, address via) internal {
+        if (paused) revert ErrPaused();
         Order storage order = _orders[orderId];
         if (amount == 0) revert ErrZeroAmount();
         if (
@@ -372,7 +381,39 @@ contract NESPCore is INESPEvents {
     function setGovernance(address newGovernance) external {
         if (msg.sender != governance) revert ErrUnauthorized();
         if (newGovernance == address(0)) revert ErrZeroAddress();
-        governance = newGovernance;
+        pendingGovernance = newGovernance;
+        emit GovernanceTransferStarted(governance, newGovernance);
+    }
+
+    function acceptGovernance() external {
+        if (msg.sender != pendingGovernance) revert ErrUnauthorized();
+        address prev = governance;
+        governance = pendingGovernance;
+        pendingGovernance = address(0);
+        emit GovernanceTransferred(prev, governance);
+    }
+
+    function schedulePause(bool pause_) external {
+        if (msg.sender != governance) revert ErrUnauthorized();
+        pendingPause = pause_;
+        pauseEta = block.timestamp + PAUSE_DELAY;
+        emit PauseScheduled(pause_, pauseEta, msg.sender);
+    }
+
+    function executePause() external {
+        if (pauseEta == 0) revert ErrInvalidState();
+        if (block.timestamp < pauseEta) revert ErrTimelockNotReady();
+        paused = pendingPause;
+        pendingPause = false;
+        pauseEta = 0;
+        emit PauseExecuted(paused, msg.sender);
+    }
+
+    function cancelPause() external {
+        if (msg.sender != governance) revert ErrUnauthorized();
+        pendingPause = false;
+        pauseEta = 0;
+        emit PauseCancelled(msg.sender);
     }
 
     // L2 Fix: Allow setting feeValidator to address(0) to disable fee validation

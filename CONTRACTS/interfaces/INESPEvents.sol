@@ -32,5 +32,10 @@ interface INESPEvents {
     event BalanceWithdrawn(address indexed to, address tokenAddr, uint256 amount);
     event ProtocolFeeWithdrawn(address indexed tokenAddr, address to, uint256 amount, address actor);
     event FeeValidatorUpdated(address prev, address next);
+    event GovernanceTransferStarted(address indexed prevGovernance, address indexed newGovernance);
+    event GovernanceTransferred(address indexed prevGovernance, address indexed newGovernance);
+    event PauseScheduled(bool pauseState, uint256 eta, address actor);
+    event PauseExecuted(bool paused, address actor);
+    event PauseCancelled(address actor);
 }
 
